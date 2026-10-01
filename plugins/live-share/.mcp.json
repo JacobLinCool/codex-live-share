@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "live_share": {
+      "command": "./bin/run",
+      "args": ["mcp"],
+      "cwd": ".",
+      "env_vars": [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "XDG_CACHE_HOME",
+        "CODEX_HOME",
+        "CODEX_CLI_PATH",
+        "CODEX_MCP_NODE_PATH",
+        "CODEX_BROWSER_USE_NODE_PATH",
+        "CODEX_ELECTRON_RESOURCES_PATH",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "CODEX_LIVE_SHARE_HOME",
+        "CODEX_LIVE_SHARE_MODE",
+        "CODEX_LIVE_SHARE_SIGNAL_URL",
+        "CODEX_LIVE_SHARE_CLOUDFLARED",
+        "CODEX_LIVE_SHARE_NODE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY"
+      ],
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 200,
+      "default_tools_approval_mode": "approve",
+      "tools": {
+        "live_share_end": { "approval_mode": "prompt" }
+      }
+    }
+  }
+}

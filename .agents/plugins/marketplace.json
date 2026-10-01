@@ -1,0 +1,20 @@
+{
+  "name": "codex-live-share",
+  "interface": {
+    "displayName": "Codex Live Share"
+  },
+  "plugins": [
+    {
+      "name": "live-share",
+      "source": {
+        "source": "local",
+        "path": "./plugins/live-share"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

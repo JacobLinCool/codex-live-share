@@ -134,3 +134,12 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Codex Live Share
+.wrangler/
+wrangler.log
+.impeccable/review/
+
+# The built plugin is committed so the repo works as a Codex plugin marketplace.
+!/plugins/live-share/dist/
+!/plugins/live-share/node_modules/

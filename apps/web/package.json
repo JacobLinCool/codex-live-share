@@ -1,0 +1,39 @@
+{
+  "name": "@codex-live-share/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm --filter @codex-live-share/transcribe build && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/legacy-modes": "6.5.4",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@codex-live-share/protocol": "workspace:*",
+    "@codex-live-share/transcribe": "workspace:*",
+    "@lezer/highlight": "1.2.5",
+    "dompurify": "3.4.16",
+    "lib0": "0.2.119",
+    "lucide-react": "1.49.0",
+    "marked": "18.0.14",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "y-codemirror.next": "0.3.6",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.2"
+  }
+}

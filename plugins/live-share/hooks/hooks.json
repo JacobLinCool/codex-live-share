@@ -1,0 +1,27 @@
+{
+  "description": "Live Share: plan before editing a shared folder, attribute agent edits, keep plans honest, and remind new sessions that the folder is shared.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook pre-tool-use", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook pre-tool-use", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook post-tool-use", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook post-tool-use", "timeout": 10, "async": true }]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook session-start", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook session-start", "timeout": 10 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook stop", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook stop", "timeout": 10 }]
+      }
+    ]
+  }
+}
