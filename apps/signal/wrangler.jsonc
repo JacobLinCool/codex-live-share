@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "codex-live-share",
+  "account_id": "b1c3d1b89f9131a84a0f1f6a973232f1",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-30",
   "durable_objects": {
@@ -20,7 +21,7 @@
     { "name": "USER_RATE_LIMITER", "namespace_id": "52004", "simple": { "limit": 120, "period": 60 } }
   ],
   "vars": {
-    "GITHUB_CLIENT_ID": ""
+    "GITHUB_CLIENT_ID": "Iv23lin1354yzAW7qQm3"
   },
   "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
   "observability": { "enabled": true }

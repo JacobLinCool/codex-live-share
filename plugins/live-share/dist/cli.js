@@ -13644,7 +13644,7 @@ function finishPlan(plan, status, now = /* @__PURE__ */ new Date()) {
 }
 
 // src/config.ts
-var DEFAULT_HOSTED_SIGNAL_URL = "https://codex-live-share.jacoblincool.workers.dev";
+var DEFAULT_HOSTED_SIGNAL_URL = "https://codex-live-share.jacob.workers.dev";
 var HOME = process.env["CODEX_LIVE_SHARE_HOME"] ?? join(homedir(), ".codex-live-share");
 var RUN_DIR = join(HOME, "run");
 var SHARES_DIR = join(HOME, "shares");

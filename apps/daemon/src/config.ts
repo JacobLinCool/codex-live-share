@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { PEER_COLORS, isColor, normalizeDisplayName } from '@codex-live-share/protocol';
 
 /** Hosted mode's signal Worker (apps/signal). Direct mode needs no server of ours. */
-export const DEFAULT_HOSTED_SIGNAL_URL = 'https://codex-live-share.jacoblincool.workers.dev';
+export const DEFAULT_HOSTED_SIGNAL_URL = 'https://codex-live-share.jacob.workers.dev';
 
 export const HOME = process.env['CODEX_LIVE_SHARE_HOME'] ?? join(homedir(), '.codex-live-share');
 export const RUN_DIR = join(HOME, 'run');

@@ -191,9 +191,7 @@ Secrets set with `wrangler secret put` are kept across deploys.
 **Continuous integration and deployment.**
 - `.github/workflows/ci.yml` runs `pnpm check` on every push and pull request. It fails if the committed `plugins/live-share` does not match a fresh build.
 - `.github/workflows/deploy-signal.yml` deploys the Worker when a push to `main` changes it or the packages it is built from. It runs the tests first, and can also be run by hand.
-- It needs two secrets in the repository's `production` environment:
-  - `CLOUDFLARE_API_TOKEN`, from the "Edit Cloudflare Workers" template;
-  - `CLOUDFLARE_ACCOUNT_ID`.
+- It needs one secret in the repository's `production` environment: `CLOUDFLARE_API_TOKEN`, from the "Edit Cloudflare Workers" template. The account is set by `account_id` in `wrangler.jsonc`.
 
 To change a user's plan:
 
