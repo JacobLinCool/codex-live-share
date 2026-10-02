@@ -1,0 +1,51 @@
+{
+  "name": "live-share",
+  "version": "0.2.0",
+  "description": "Share this folder live with other people and their Codex agents: shared editing over WebRTC, short public plans before agents edit, and a meeting transcript agents can read.",
+  "author": {
+    "name": "Jacob Lin",
+    "url": "https://github.com/JacobLinCool"
+  },
+  "homepage": "https://github.com/JacobLinCool/codex-live-share",
+  "repository": "https://github.com/JacobLinCool/codex-live-share",
+  "license": "MIT",
+  "keywords": [
+    "collaboration",
+    "live-share",
+    "pair-writing",
+    "webrtc",
+    "transcript",
+    "latex",
+    "markdown"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Live Share",
+    "shortDescription": "Edit a folder live with people and their agents",
+    "longDescription": "Share the folder you are working in. Everyone edits together in the side browser with live cursors, each person's Codex posts a short plan everyone sees before it changes files, and what you say aloud is transcribed so your agent can act on the discussion. Direct mode connects peers with no server in between; hosted mode adds a relay for strict networks.",
+    "developerName": "Jacob Lin",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/JacobLinCool/codex-live-share",
+    "defaultPrompt": [
+      "Start live share",
+      "Join live share <paste the invite link>",
+      "Apply what we just discussed"
+    ],
+    "brandColor": "#5B8CFF",
+    "composerIcon": "./assets/composer-icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-editor.png",
+      "./assets/screenshot-transcript.png"
+    ],
+    "privacyPolicyURL": "https://github.com/JacobLinCool/codex-live-share/blob/main/legal/privacy.md",
+    "termsOfServiceURL": "https://github.com/JacobLinCool/codex-live-share/blob/main/legal/terms.md"
+  }
+}

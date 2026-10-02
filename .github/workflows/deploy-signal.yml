@@ -1,0 +1,51 @@
+name: Deploy signal Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/signal/**
+      - packages/protocol/**
+      - packages/signal-core/**
+      - legal/**
+      - pnpm-lock.yaml
+      - .github/workflows/deploy-signal.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-signal
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Test what the Worker is built from
+        run: |
+          pnpm --filter @codex-live-share/protocol --filter @codex-live-share/signal-core --filter @codex-live-share/signal typecheck
+          pnpm --filter @codex-live-share/protocol --filter @codex-live-share/signal-core test
+      # `wrangler deploy` replaces vars with the ones in wrangler.jsonc, so an
+      # empty client ID would switch GitHub sign-in off in production.
+      - name: GitHub sign-in is configured
+        run: |
+          if grep -Eq '"GITHUB_CLIENT_ID": *""' apps/signal/wrangler.jsonc; then
+            echo "::error::Set GITHUB_CLIENT_ID in apps/signal/wrangler.jsonc before deploying."
+            exit 1
+          fi
+      # Runtime secrets (GITHUB_CLIENT_SECRET, ADMIN_TOKEN, TURN_KEY_*) are set
+      # once with `wrangler secret put` and are kept across deploys.
+      - name: Deploy
+        run: pnpm --filter @codex-live-share/signal exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

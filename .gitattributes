@@ -1,0 +1,5 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+*.cmd text eol=crlf
+plugin-src/bin/run text eol=lf
+plugins/live-share/bin/run text eol=lf

@@ -1,0 +1,2 @@
+- Keep Chinese normalization strictly at character level. Do not introduce phrase conversion or regional vocabulary replacement.
+- Enable normalization only when Traditional Chinese is selected and Simplified Chinese is not selected.

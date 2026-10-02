@@ -1,0 +1,37 @@
+#!/bin/sh
+# Select a Node runtime that can actually load the bundled WebRTC addon.
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH
+
+# A signed macOS runtime can execute JavaScript but reject third-party native
+# addons. Probe the real CLI before selecting it, including for MCP and hooks.
+if [ -n "${CODEX_LIVE_SHARE_NODE:-}" ]; then
+  "$CODEX_LIVE_SHARE_NODE" "$root/bin/check-runtime.mjs" >/dev/null
+  exec "$CODEX_LIVE_SHARE_NODE" "$root/dist/cli.js" "$@"
+fi
+
+cache_root=${XDG_CACHE_HOME:-${HOME:-}/.cache}
+codex_resources=
+case "${CODEX_CLI_PATH:-}" in
+  */*) codex_resources=${CODEX_CLI_PATH%/*} ;;
+esac
+
+for candidate in \
+  "${CODEX_MCP_NODE_PATH:-}" \
+  "${CODEX_BROWSER_USE_NODE_PATH:-}" \
+  "${CODEX_ELECTRON_RESOURCES_PATH:-}/cua_node/bin/node" \
+  "$codex_resources/cua_node/bin/node" \
+  "$cache_root/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
+  "$(command -v node 2>/dev/null || true)"
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ] && \
+    "$candidate" "$root/bin/check-runtime.mjs" >/dev/null 2>&1; then
+    exec "$candidate" "$root/dist/cli.js" "$@"
+  fi
+done
+
+printf '%s\n' 'Live Share needs Node.js 22 or newer that can load its bundled WebRTC addon. None of the discovered runtimes passed the startup check. Install Node.js 22 or newer and set CODEX_LIVE_SHARE_NODE to its executable.' >&2
+exit 127

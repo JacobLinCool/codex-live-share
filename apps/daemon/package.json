@@ -1,0 +1,42 @@
+{
+  "name": "@codex-live-share/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Live Share for Codex: share a folder over WebRTC with people, their agents, shared plans, and a meeting transcript.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@codex-live-share/protocol": "workspace:*",
+    "@codex-live-share/signal-core": "workspace:*",
+    "@codex-live-share/sync": "workspace:*",
+    "@codex-live-share/transcribe": "workspace:*",
+    "@codex-live-share/web": "workspace:*",
+    "@types/node": "24.19.0",
+    "@types/ws": "8.18.2",
+    "lib0": "0.2.119",
+    "node-datachannel": "0.33.4",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "ws": "8.22.0",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "optionalDependencies": {
+    "@node-datachannel/darwin-arm64": "0.33.4",
+    "@node-datachannel/linux-arm64-gnu": "0.33.4",
+    "@node-datachannel/linux-arm64-musl": "0.33.4",
+    "@node-datachannel/linux-x64-gnu": "0.33.4",
+    "@node-datachannel/linux-x64-musl": "0.33.4",
+    "@node-datachannel/win32-arm64-msvc": "0.33.4",
+    "@node-datachannel/win32-x64-msvc": "0.33.4"
+  }
+}

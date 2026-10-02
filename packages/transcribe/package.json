@@ -1,0 +1,40 @@
+{
+  "name": "@codex-live-share/transcribe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless live browser audio transcription (Gemini, OpenAI). Vendored from Weave-In.",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./adapter": {
+      "types": "./dist/adapter.d.ts",
+      "import": "./dist/adapter.js"
+    },
+    "./audio-worklet.js": "./dist/audio-worklet.js",
+    "./contracts": "./src/contracts.ts"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "opencc-js": "1.4.2"
+  }
+}
