@@ -38,6 +38,7 @@ import { DirectSignal } from './direct-signal';
 import { DocHub, type Endpoint } from './doc-hub';
 import { PeerMesh } from './peer-mesh';
 import { QuickTunnel, resolveCloudflared } from './tunnel';
+import { hostedToken } from './account';
 import { removeRunEntry, writeRunEntry } from './registry';
 import { ShareStore, type ShareRecord } from './share-store';
 
@@ -84,6 +85,7 @@ export class Daemon {
   #directSignal: DirectSignal | null = null;
   #tunnelState: 'none' | 'opening' | 'open' | 'failed' = 'none';
   #tunnelError: string | null = null;
+  #notice: { code: string; message: string; at: string } | null = null;
   #tunnel: QuickTunnel | null = null;
   #config: UserConfig;
   #record!: ShareRecord;
@@ -112,15 +114,14 @@ export class Daemon {
     this.store = new ShareStore(options.folder);
     const previous = this.store.read();
     const invite = options.invite;
-    const resumable = previous && !previous.ended && previous.role === options.role && previous.mode
-      && (options.role === 'host' || previous.code === invite?.code);
-    if (resumable) {
+    // Resume only a share that actually got going; a start that failed early left no doc behind.
+    const resumable = Boolean(previous && !previous.ended && previous.role === options.role && previous.mode
+      && (options.role === 'host' || previous.code === invite?.code)
+      && this.store.loadDoc(this.doc));
+    if (resumable && previous) {
       this.#record = previous;
       // A direct host gets a new tunnel address on every start; the newest invite wins.
       if (invite) this.#record.signalUrl = invite.signalUrl;
-      if (!this.store.loadDoc(this.doc)) {
-        throw new DaemonError('STATE_LOST', 'Saved session state is missing; end the session and start again.');
-      }
     } else {
       if (options.role === 'guest' && !invite) throw new DaemonError('INVITE_REQUIRED', 'An invite link is required to join.');
       const mode: ConnectionMode = invite ? (isTunnelUrl(invite.signalUrl) ? 'direct' : 'hosted') : options.mode;
@@ -146,7 +147,7 @@ export class Daemon {
         });
       }
     }
-    this.#resumed = Boolean(resumable);
+    this.#resumed = resumable;
     this.#record.localToken ??= randomBytes(24).toString('hex');
     this.token = this.#record.localToken;
     this.identity = { peerId: this.#record.peerId, name: this.#config.name, color: this.#config.color };
@@ -176,6 +177,9 @@ export class Daemon {
 
   /** Called once the HTTP server is listening. */
   async start(): Promise<void> {
+    if (this.mode === 'hosted' && this.role === 'host' && !this.#resumed && !hostedToken(this.#record.signalUrl ?? this.#config.hostedSignalUrl)) {
+      throw new DaemonError('AUTH_REQUIRED', 'Hosted mode needs a signed-in host. Call live_share_login first (or use direct mode, which needs no account).');
+    }
     this.store.write(this.#record);
     writeRunEntry({
       folder: this.folder,
@@ -206,8 +210,12 @@ export class Daemon {
 
     const signalUrl = this.role === 'host' && this.mode === 'direct' ? await this.#openDirectRoom() : this.#record.signalUrl;
     if (!signalUrl) throw new DaemonError('NO_SIGNAL', 'This share has no signal server address; end it and start again.');
+    const hosted = this.mode === 'hosted';
+    const authToken = hosted && this.role === 'host' ? hostedToken(signalUrl) : null;
     this.#mesh = new PeerMesh({
       signalUrl,
+      hosted,
+      authToken,
       code: this.code,
       action: this.role === 'host' ? 'create' : 'join',
       self: this.identity,
@@ -222,6 +230,11 @@ export class Daemon {
       this.#changed();
     });
     this.#mesh.on('members', () => this.#changed());
+    this.#mesh.on('notice', (code, message) => {
+      this.#notice = { code, message, at: new Date().toISOString() };
+      this.#warn(message);
+      this.#changed();
+    });
     this.#mesh.on('knocks', () => this.#changed());
     this.#mesh.on('open', (peerId) => {
       this.hub.add(this.#peerEndpoint(peerId));
@@ -301,7 +314,7 @@ export class Daemon {
       inviteUrl: this.inviteUrl,
       nameConfirmed: this.#config.nameConfirmed,
       status: this.#status,
-      error: this.#error ?? this.#tunnelError,
+      error: this.#error ?? this.#tunnelError ?? this.#notice?.message ?? null,
       folderName: basename(this.folder),
       members: this.#mesh?.members ?? [],
       connected: this.#mesh?.connectedPeers ?? [],
@@ -351,7 +364,8 @@ export class Daemon {
       role: this.role,
       mode: this.mode,
       invite: this.mode === 'direct' && this.role === 'host' ? this.#tunnelState : 'ready',
-      relay: this.mode === 'hosted' ? 'Cloudflare TURN when a direct path fails' : 'none (direct peer-to-peer only)',
+      relay: this.mode === 'hosted' ? (this.#mesh?.relayed ? 'in use (Cloudflare TURN)' : 'available if a direct path fails') : 'none (direct peer-to-peer only)',
+      notice: this.#notice,
       access: this.access,
       status: session.status,
       error: session.error,

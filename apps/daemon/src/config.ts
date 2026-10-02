@@ -23,6 +23,8 @@ export interface UserConfig {
   color: string;
   defaultMode: ConnectionMode;
   hostedSignalUrl: string;
+  /** Hosted-mode sign-in (hosts only). */
+  hostedAuth?: { token: string; login: string; signalUrl: string };
   asr: {
     provider: 'openai' | 'gemini' | null;
     openaiApiKey?: string;
@@ -47,6 +49,7 @@ export function loadConfig(): UserConfig {
     color,
     defaultMode: mode === 'hosted' ? 'hosted' : 'direct',
     hostedSignalUrl: process.env['CODEX_LIVE_SHARE_SIGNAL_URL'] ?? stored.hostedSignalUrl ?? stored.signalUrl ?? DEFAULT_HOSTED_SIGNAL_URL,
+    ...(stored.hostedAuth ? { hostedAuth: stored.hostedAuth } : {}),
     asr: { provider: null, ...stored.asr },
   };
 }

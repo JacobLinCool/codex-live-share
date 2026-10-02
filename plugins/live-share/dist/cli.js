@@ -13513,6 +13513,10 @@ function parseSignalClientMessage(value) {
       return { type: "end" };
     case "ping":
       return { type: "ping" };
+    case "usage": {
+      const seconds = value["relaySeconds"];
+      return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 && seconds <= 24 * 3600 ? { type: "usage", relaySeconds: Math.round(seconds) } : null;
+    }
     default:
       return null;
   }
@@ -13661,6 +13665,7 @@ function loadConfig() {
     color,
     defaultMode: mode === "hosted" ? "hosted" : "direct",
     hostedSignalUrl: process.env["CODEX_LIVE_SHARE_SIGNAL_URL"] ?? stored.hostedSignalUrl ?? stored.signalUrl ?? DEFAULT_HOSTED_SIGNAL_URL,
+    ...stored.hostedAuth ? { hostedAuth: stored.hostedAuth } : {},
     asr: { provider: null, ...stored.asr }
   };
 }
@@ -13805,6 +13810,20 @@ async function spawnDaemon(cliPath2, folder, role) {
     if (child.exitCode !== null) break;
   }
   throw new RpcError("START_FAILED", `The live share daemon did not start; see ${join3(logs, `${key}.log`)}.`);
+}
+async function awaitOutcome(entry, timeoutMs = 2e4) {
+  let status = await callDaemon(entry, "status");
+  const deadline = Date.now() + timeoutMs;
+  while (["starting", "connecting", "reconnecting"].includes(String(status["status"])) && Date.now() < deadline) {
+    await new Promise((resolve4) => setTimeout(resolve4, 400));
+    status = await callDaemon(entry, "status");
+  }
+  if (status["status"] === "error" || status["status"] === "denied") {
+    await callDaemon(entry, "stop").catch(() => {
+    });
+    throw new RpcError("REFUSED", String(status["error"] ?? "The live share service refused the request."));
+  }
+  return status;
 }
 
 // src/daemon.ts
@@ -16170,10 +16189,29 @@ var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 var wrapper_default = import_websocket.default;
 
+// ../../packages/signal-core/src/legal.ts
+var LEGAL_PAGES = [
+  { slug: "terms", title: "Terms of Service" },
+  { slug: "privacy", title: "Privacy Policy" },
+  { slug: "refunds", title: "Refund Policy" }
+];
+var LEGAL_REPO_BASE = "https://github.com/JacobLinCool/codex-live-share/blob/main/legal";
+function legalHref(slug, base) {
+  return base === null ? `/${slug}` : `${base}/${slug}.md`;
+}
+
+// ../../packages/signal-core/src/tiers.ts
+var TIER_NAMES = ["free", "plus", "pro"];
+var TIERS = {
+  free: { priceUsd: 0, rooms: 1, people: 3, sessionMs: 2 * 36e5, relaySecondsPerMonth: 10 * 3600 },
+  plus: { priceUsd: 5, rooms: 2, people: 5, sessionMs: 8 * 36e5, relaySecondsPerMonth: 50 * 3600 },
+  pro: { priceUsd: 20, rooms: 5, people: 8, sessionMs: null, relaySecondsPerMonth: 200 * 3600 }
+};
+
 // ../../packages/signal-core/src/landing.ts
 var MARKETPLACE_REPO = "JacobLinCool/codex-live-share";
 var PLUGIN_SELECTOR = "live-share@codex-live-share";
-function landingPage(code, origin) {
+function landingPage(code, origin, legalBase = null) {
   const invite = code ? `${origin}/j/${code}` : null;
   const install2 = `codex plugin marketplace add ${MARKETPLACE_REPO} && codex plugin add ${PLUGIN_SELECTOR}`;
   const say = invite ? `Join live share ${invite}` : "Start live share";
@@ -16204,6 +16242,13 @@ function landingPage(code, origin) {
   button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; flex: none; }
   button:hover { border-color: var(--accent); }
   .note { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  td.num, th.num { font-variant-numeric: tabular-nums; }
+  h2 { font-size: 17px; margin: 40px 0 6px; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  footer a { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -16226,6 +16271,11 @@ function landingPage(code, origin) {
       <span class="note">The editor opens in Codex's side browser. Allow the microphone there to add your voice to the transcript.</span>
     </li>
   </ol>
+${code ? "" : pricing()}
+  <footer>${[
+    ...legalBase === null ? ['<a href="/account">Account</a>'] : [],
+    ...LEGAL_PAGES.map((page) => `<a href="${legalHref(page.slug, legalBase)}">${page.title}</a>`)
+  ].join(" \xB7 ")}</footer>
 </main>
 <script>
   for (const button of document.querySelectorAll('[data-copy]')) {
@@ -16247,6 +16297,23 @@ var LANDING_HEADERS = {
   "X-Content-Type-Options": "nosniff"
 };
 var STUN_SERVERS = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+function pricing() {
+  const label = (name) => name[0].toUpperCase() + name.slice(1);
+  const hours = (ms) => ms === null ? "Unlimited" : `${ms / 36e5} h`;
+  const rows = [
+    ["Price", (tier) => tier.priceUsd ? `$${tier.priceUsd} / month` : "Free"],
+    ["Hosted rooms at once", (tier) => String(tier.rooms)],
+    ["People per room", (tier) => String(tier.people)],
+    ["Session length", (tier) => hours(tier.sessionMs)],
+    ["Relay time per month", (tier) => `${tier.relaySecondsPerMonth / 3600} h`]
+  ];
+  return `<h2>Hosted mode plans</h2>
+  <p class="note">Direct mode is free and needs no account. Hosted mode adds a relay for networks that block direct connections; only the host signs in (with GitHub).</p>
+  <table>
+    <thead><tr><th></th>${TIER_NAMES.map((name) => `<th class="num">${label(name)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(([title, cell]) => `<tr><td>${title}</td>${TIER_NAMES.map((name) => `<td class="num">${cell(TIERS[name])}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table>`;
+}
 
 // ../../packages/signal-core/src/room-core.ts
 var RoomCore = class {
@@ -16273,7 +16340,16 @@ var RoomCore = class {
         return fail("ROOM_EXISTS", "This room code is taken. Start again to get a new code.");
       }
       if (!room || room.ended) {
-        room = { code, hostPeerId: peerId, createdAt: Date.now(), ended: false };
+        const policy = this.#runtime.policy;
+        const decision = policy ? await policy.authorizeCreate({ authorization: params2.authorization ?? null, code }) : null;
+        if (decision && !decision.ok) return fail(decision.code, decision.message);
+        room = {
+          code,
+          hostPeerId: peerId,
+          createdAt: Date.now(),
+          ended: false,
+          ...decision?.ok ? { owner: decision.owner, maxPeople: decision.maxPeople, sessionMs: decision.sessionMs } : {}
+        };
         for (const key of Object.keys(members)) delete members[key];
         members[peerId] = { peerId, name, color, isHost: true, access: "edit", secretHash };
         await storage.put({ room, members });
@@ -16338,6 +16414,11 @@ var RoomCore = class {
       return;
     }
     if (!attachment.admitted) return;
+    if (message.type === "usage") {
+      const room2 = await this.#runtime.storage.get("room");
+      if (room2 && message.relaySeconds > 0) await this.#runtime.policy?.onUsage?.(room2, attachment.peerId, message.relaySeconds);
+      return;
+    }
     if (message.type === "signal") {
       const target = this.#socketOf(message.target);
       if (target?.getAttachment()?.admitted) send(target, { type: "signal", from: attachment.peerId, payload: message.payload });
@@ -16350,13 +16431,7 @@ var RoomCore = class {
       return;
     }
     if (message.type === "end") {
-      room.ended = true;
-      await storage.put({ room });
-      for (const other of [...this.#runtime.sockets()]) {
-        send(other, { type: "ended" });
-        other.setAttachment(null);
-        other.close(1e3, "Room ended");
-      }
+      await this.end();
       return;
     }
     const knocking = this.#socketOf(message.peerId);
@@ -16373,6 +16448,15 @@ var RoomCore = class {
       return;
     }
     const members = await storage.get("members") ?? {};
+    const maxPeople = room.maxPeople ?? MAX_PEERS;
+    if (Object.keys(members).length >= maxPeople) {
+      send(socket, {
+        type: "error",
+        code: "ROOM_FULL",
+        message: room.owner ? `Your plan allows ${maxPeople} people in a room. Upgrade to add more.` : `A room holds at most ${maxPeople} people.`
+      });
+      return;
+    }
     const stored = {
       peerId: pending.peerId,
       name: pending.name,
@@ -16387,6 +16471,25 @@ var RoomCore = class {
     const self = toMember(stored);
     send(knocking, { type: "welcome", self, code: room.code, peers: this.#connectedMembers(members, stored.peerId) });
     this.#broadcast({ type: "peer-joined", peer: self }, stored.peerId);
+  }
+  /** Ends the room for everyone, optionally telling them why first. */
+  async end(reason) {
+    const room = await this.#runtime.storage.get("room");
+    if (room) {
+      room.ended = true;
+      await this.#runtime.storage.put({ room });
+      await this.#runtime.policy?.onEnded?.(room);
+    }
+    for (const other of [...this.#runtime.sockets()]) {
+      if (reason) send(other, { type: "notice", ...reason });
+      send(other, { type: "ended" });
+      other.setAttachment(null);
+      other.close(1e3, "Room ended");
+    }
+  }
+  /** Sends a notice to everyone in the room. */
+  notify(code, message) {
+    for (const { socket } of this.#admitted()) send(socket, { type: "notice", code, message });
   }
   /** Call when a socket closes or errors. Returns true when the room has no live connection left. */
   async closed(socket) {
@@ -16466,7 +16569,7 @@ var DirectSignal = class {
       } else if (url.pathname === "/api/ice-servers" && request.method === "POST") {
         response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify({ ok: true, iceServers: STUN_SERVERS }));
       } else if (url.pathname === `/j/${this.#code}` || url.pathname === `/j/${this.#code}/`) {
-        response.writeHead(200, LANDING_HEADERS).end(landingPage(this.#code, origin));
+        response.writeHead(200, LANDING_HEADERS).end(landingPage(this.#code, origin, LEGAL_REPO_BASE));
       } else {
         response.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
       }
@@ -17220,6 +17323,8 @@ var FRAGMENT_BYTES = 60 * 1024;
 var HIGH_WATER_BYTES = 4 * 1024 * 1024;
 var RECONNECT_MS = [1e3, 2e3, 5e3, 1e4, 2e4];
 var PING_MS = 25e3;
+var METER_MS = 6e4;
+var REPORT_MS = 5 * 6e4;
 var DISCONNECTED_GRACE_MS = 6e3;
 var PeerMesh = class extends EventEmitter3 {
   #options;
@@ -17236,6 +17341,11 @@ var PeerMesh = class extends EventEmitter3 {
   #ping = null;
   #reconnect = null;
   #action;
+  #iceRefresh = null;
+  #meter = null;
+  #relaySeconds = 0;
+  #relayReportedAt = Date.now();
+  #awaitingMembership = true;
   constructor(options) {
     super();
     this.#options = options;
@@ -17257,11 +17367,49 @@ var PeerMesh = class extends EventEmitter3 {
     return this.#members.get(peerId);
   }
   async start() {
-    this.#iceServers = await fetchIceServers(this.#options.signalUrl).catch((error) => {
-      this.#options.log(`ICE configuration unavailable, using public STUN: ${String(error)}`);
-      return ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"];
-    });
+    await this.#refreshIce();
     this.#connect();
+    this.#meter = setInterval(() => this.#meterRelay(), METER_MS);
+  }
+  /** Hosted rooms hand out TURN credentials that expire; renew them before they do. */
+  async #refreshIce() {
+    const { signalUrl, code, self, secret, hosted } = this.#options;
+    const result = await fetchIceServers(hosted ? signalUrl : null, { code, peerId: self.peerId, secret }).catch((error) => {
+      this.#options.log(`ICE configuration unavailable, using public STUN: ${String(error)}`);
+      return { servers: toNodeIceServers(STUN_SERVERS), expiresIn: null, reason: null };
+    });
+    this.#iceServers = result.servers;
+    if (result.reason) this.#options.log(`No relay: ${result.reason}`);
+    if (this.#iceRefresh) clearTimeout(this.#iceRefresh);
+    if (result.expiresIn && !this.#closed) {
+      this.#iceRefresh = setTimeout(() => void this.#refreshIce(), Math.max(3e4, result.expiresIn * 800));
+    }
+  }
+  /** Hosted mode meters TURN use: count time on links whose selected path is a relay, and report it. */
+  #meterRelay() {
+    for (const link of this.#links.values()) {
+      if (!link.open) continue;
+      try {
+        const pair = link.pc.getSelectedCandidatePair();
+        if (pair && (pair.local.type === "relay" || pair.remote.type === "relay")) this.#relaySeconds += METER_MS / 1e3;
+      } catch {
+      }
+    }
+    if (this.#relaySeconds > 0 && Date.now() - this.#relayReportedAt >= REPORT_MS && this.#socket?.readyState === wrapper_default.OPEN) {
+      this.#signal({ type: "usage", relaySeconds: this.#relaySeconds });
+      this.#relaySeconds = 0;
+      this.#relayReportedAt = Date.now();
+    }
+  }
+  get relayed() {
+    for (const link of this.#links.values()) {
+      try {
+        const pair = link.open ? link.pc.getSelectedCandidatePair() : null;
+        if (pair && (pair.local.type === "relay" || pair.remote.type === "relay")) return true;
+      } catch {
+      }
+    }
+    return false;
   }
   send(peerId, frame2) {
     const link = this.#links.get(peerId);
@@ -17297,6 +17445,9 @@ var PeerMesh = class extends EventEmitter3 {
   }
   close() {
     this.#closed = true;
+    if (this.#relaySeconds > 0) this.#signal({ type: "usage", relaySeconds: this.#relaySeconds });
+    if (this.#iceRefresh) clearTimeout(this.#iceRefresh);
+    if (this.#meter) clearInterval(this.#meter);
     if (this.#ping) clearInterval(this.#ping);
     if (this.#reconnect) clearTimeout(this.#reconnect);
     this.#socket?.close(1e3, "Daemon stopping");
@@ -17308,7 +17459,8 @@ var PeerMesh = class extends EventEmitter3 {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.search = new URLSearchParams({ action: this.#action, peerId: self.peerId, name: self.name, color: self.color, secret }).toString();
     this.emit("status", this.#attempt ? "reconnecting" : "connecting", null);
-    const socket = new wrapper_default(url, { lookup: tunnelAwareLookup, handshakeTimeout: 15e3 });
+    const headers = this.#options.authToken ? { Authorization: `Bearer ${this.#options.authToken}` } : {};
+    const socket = new wrapper_default(url, { lookup: tunnelAwareLookup, handshakeTimeout: 15e3, headers });
     this.#socket = socket;
     socket.addEventListener("message", (event) => {
       let message;
@@ -17346,6 +17498,10 @@ var PeerMesh = class extends EventEmitter3 {
         for (const peer of message.peers) this.#members.set(peer.peerId, peer);
         this.emit("members", this.members);
         this.emit("status", "connected", null);
+        if (this.#options.hosted && this.#awaitingMembership) {
+          this.#awaitingMembership = false;
+          void this.#refreshIce();
+        }
         for (const peer of message.peers) this.#ensureLink(peer.peerId);
         for (const peerId of [...this.#links.keys()]) if (!this.#members.has(peerId)) this.#dropLink(peerId);
         break;
@@ -17389,9 +17545,17 @@ var PeerMesh = class extends EventEmitter3 {
         this.#closed = true;
         this.emit("status", "ended", "The host ended the session.");
         break;
+      case "notice":
+        this.#options.log(`Notice ${message.code}: ${message.message}`);
+        this.emit("notice", message.code, message.message);
+        break;
       case "error":
+        if (this.#self && this.#members.has(this.#self.peerId) && message.code === "ROOM_FULL") {
+          this.emit("notice", message.code, message.message);
+          break;
+        }
         this.emit("status", "error", message.message);
-        if (["ROOM_NOT_FOUND", "ROOM_ENDED", "ROOM_EXISTS", "ROOM_FULL", "INVALID_SECRET", "HOST_OFFLINE"].includes(message.code)) {
+        if (["ROOM_NOT_FOUND", "ROOM_ENDED", "ROOM_EXISTS", "ROOM_FULL", "INVALID_SECRET", "HOST_OFFLINE", "AUTH_REQUIRED", "ROOM_LIMIT"].includes(message.code)) {
           this.#closed = true;
         }
         break;
@@ -17581,18 +17745,21 @@ var PeerMesh = class extends EventEmitter3 {
     return frame2;
   }
 };
-async function fetchIceServers(signalUrl) {
-  const host = new URL(signalUrl).hostname;
-  if (isQuickTunnelHost(host) || host === "127.0.0.1" || host === "localhost") return toNodeIceServers(STUN_SERVERS);
-  const response = await fetch(new URL("/api/ice-servers", signalUrl), {
+async function fetchIceServers(serviceUrl, member) {
+  if (!serviceUrl) return { servers: toNodeIceServers(STUN_SERVERS), expiresIn: null, reason: null };
+  const response = await fetch(new URL("/api/ice-servers", serviceUrl), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify(member),
     signal: AbortSignal.timeout(8e3)
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const payload = await response.json();
-  return toNodeIceServers(payload.iceServers ?? []);
+  return {
+    servers: toNodeIceServers(payload.iceServers ?? STUN_SERVERS),
+    expiresIn: typeof payload.expiresIn === "number" ? payload.expiresIn : null,
+    reason: payload.reason ?? null
+  };
 }
 function toNodeIceServers(servers) {
   const result = [];
@@ -17816,6 +17983,106 @@ async function download(url, log) {
   }
 }
 
+// src/account.ts
+var AccountError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
+async function startLogin(signalUrl = loadConfig().hostedSignalUrl) {
+  const config = await serviceConfig(signalUrl);
+  if (!config.githubClientId) throw new AccountError("LOGIN_UNAVAILABLE", `${signalUrl} has no GitHub sign-in configured.`);
+  const response = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: config.githubClientId, scope: "read:user" }),
+    signal: AbortSignal.timeout(15e3)
+  });
+  const body = await response.json();
+  if (!response.ok || !body.device_code || !body.user_code) {
+    throw new AccountError("LOGIN_FAILED", body.error_description ?? `GitHub refused the sign-in request (HTTP ${response.status}).`);
+  }
+  const clientId = config.githubClientId;
+  const deviceCode = body.device_code;
+  const expiresIn = body.expires_in ?? 900;
+  const done = (async () => {
+    let interval = Math.max(5, body.interval ?? 5) * 1e3;
+    const deadline = Date.now() + expiresIn * 1e3;
+    while (Date.now() < deadline) {
+      await new Promise((resolve4) => setTimeout(resolve4, interval));
+      const poll = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+        signal: AbortSignal.timeout(15e3)
+      }).then((result) => result.json());
+      if (poll.access_token) return exchange(signalUrl, poll.access_token);
+      if (poll.error === "slow_down") interval = Math.max(interval + 5e3, (poll.interval ?? 0) * 1e3);
+      else if (poll.error && poll.error !== "authorization_pending") {
+        throw new AccountError("LOGIN_FAILED", poll.error_description ?? `GitHub sign-in failed: ${poll.error}`);
+      }
+    }
+    throw new AccountError("LOGIN_EXPIRED", "The sign-in code expired before it was approved. Try again.");
+  })();
+  done.catch(() => {
+  });
+  return { userCode: body.user_code, verificationUri: body.verification_uri ?? "https://github.com/login/device", expiresIn, done };
+}
+async function exchange(signalUrl, accessToken) {
+  const response = await fetch(new URL("/api/auth/github", signalUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken }),
+    signal: AbortSignal.timeout(15e3)
+  });
+  const body = await response.json();
+  if (!body.ok || !body.token || !body.account) throw new AccountError(body.code ?? "LOGIN_FAILED", "The Live Share service did not accept the GitHub sign-in.");
+  const config = loadConfig();
+  saveConfig({ ...config, hostedAuth: { token: body.token, login: body.account.login, signalUrl: new URL(signalUrl).origin } });
+  return body.account.login;
+}
+async function accountSummary() {
+  const config = loadConfig();
+  const auth = config.hostedAuth;
+  if (!auth || auth.signalUrl !== new URL(config.hostedSignalUrl).origin) {
+    throw new AccountError("NOT_SIGNED_IN", "Not signed in to hosted mode. Use live_share_login (only needed to host in hosted mode).");
+  }
+  const response = await fetch(new URL("/api/me", auth.signalUrl), {
+    headers: { Authorization: `Bearer ${auth.token}` },
+    signal: AbortSignal.timeout(15e3)
+  });
+  const body = await response.json();
+  if (!body.ok || !body.account) {
+    if (response.status === 401) throw new AccountError("NOT_SIGNED_IN", "Your hosted-mode sign-in is no longer valid. Use live_share_login again.");
+    throw new AccountError(body.code ?? "ACCOUNT_FAILED", "Could not read your hosted-mode account.");
+  }
+  return body.account;
+}
+async function logout() {
+  const config = loadConfig();
+  const auth = config.hostedAuth;
+  if (!auth) return;
+  await fetch(new URL("/api/auth/logout", auth.signalUrl), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${auth.token}` },
+    signal: AbortSignal.timeout(1e4)
+  }).catch(() => {
+  });
+  const { hostedAuth: _removed, ...rest } = config;
+  saveConfig(rest);
+}
+function hostedToken(signalUrl) {
+  const auth = loadConfig().hostedAuth;
+  return auth && auth.signalUrl === new URL(signalUrl).origin ? auth.token : null;
+}
+async function serviceConfig(signalUrl) {
+  const response = await fetch(new URL("/api/auth/config", signalUrl), { signal: AbortSignal.timeout(1e4) });
+  if (!response.ok) throw new AccountError("SERVICE_UNAVAILABLE", `The Live Share service at ${signalUrl} is unavailable (HTTP ${response.status}).`);
+  return await response.json();
+}
+
 // src/share-store.ts
 import { mkdirSync as mkdirSync4, readFileSync as readFileSync6, renameSync as renameSync3, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "fs";
 import { join as join9 } from "path";
@@ -17889,6 +18156,7 @@ var Daemon = class {
   #directSignal = null;
   #tunnelState = "none";
   #tunnelError = null;
+  #notice = null;
   #tunnel = null;
   #config;
   #record;
@@ -17916,13 +18184,10 @@ var Daemon = class {
     this.store = new ShareStore(options.folder);
     const previous = this.store.read();
     const invite = options.invite;
-    const resumable = previous && !previous.ended && previous.role === options.role && previous.mode && (options.role === "host" || previous.code === invite?.code);
-    if (resumable) {
+    const resumable = Boolean(previous && !previous.ended && previous.role === options.role && previous.mode && (options.role === "host" || previous.code === invite?.code) && this.store.loadDoc(this.doc));
+    if (resumable && previous) {
       this.#record = previous;
       if (invite) this.#record.signalUrl = invite.signalUrl;
-      if (!this.store.loadDoc(this.doc)) {
-        throw new DaemonError("STATE_LOST", "Saved session state is missing; end the session and start again.");
-      }
     } else {
       if (options.role === "guest" && !invite) throw new DaemonError("INVITE_REQUIRED", "An invite link is required to join.");
       const mode = invite ? isTunnelUrl(invite.signalUrl) ? "direct" : "hosted" : options.mode;
@@ -17948,7 +18213,7 @@ var Daemon = class {
         });
       }
     }
-    this.#resumed = Boolean(resumable);
+    this.#resumed = resumable;
     this.#record.localToken ??= randomBytes3(24).toString("hex");
     this.token = this.#record.localToken;
     this.identity = { peerId: this.#record.peerId, name: this.#config.name, color: this.#config.color };
@@ -17972,6 +18237,9 @@ var Daemon = class {
   }
   /** Called once the HTTP server is listening. */
   async start() {
+    if (this.mode === "hosted" && this.role === "host" && !this.#resumed && !hostedToken(this.#record.signalUrl ?? this.#config.hostedSignalUrl)) {
+      throw new DaemonError("AUTH_REQUIRED", "Hosted mode needs a signed-in host. Call live_share_login first (or use direct mode, which needs no account).");
+    }
     this.store.write(this.#record);
     writeRunEntry({
       folder: this.folder,
@@ -18000,8 +18268,12 @@ var Daemon = class {
     }
     const signalUrl = this.role === "host" && this.mode === "direct" ? await this.#openDirectRoom() : this.#record.signalUrl;
     if (!signalUrl) throw new DaemonError("NO_SIGNAL", "This share has no signal server address; end it and start again.");
+    const hosted = this.mode === "hosted";
+    const authToken = hosted && this.role === "host" ? hostedToken(signalUrl) : null;
     this.#mesh = new PeerMesh({
       signalUrl,
+      hosted,
+      authToken,
       code: this.code,
       action: this.role === "host" ? "create" : "join",
       self: this.identity,
@@ -18016,6 +18288,11 @@ var Daemon = class {
       this.#changed();
     });
     this.#mesh.on("members", () => this.#changed());
+    this.#mesh.on("notice", (code, message) => {
+      this.#notice = { code, message, at: (/* @__PURE__ */ new Date()).toISOString() };
+      this.#warn(message);
+      this.#changed();
+    });
     this.#mesh.on("knocks", () => this.#changed());
     this.#mesh.on("open", (peerId) => {
       this.hub.add(this.#peerEndpoint(peerId));
@@ -18087,7 +18364,7 @@ var Daemon = class {
       inviteUrl: this.inviteUrl,
       nameConfirmed: this.#config.nameConfirmed,
       status: this.#status,
-      error: this.#error ?? this.#tunnelError,
+      error: this.#error ?? this.#tunnelError ?? this.#notice?.message ?? null,
       folderName: basename3(this.folder),
       members: this.#mesh?.members ?? [],
       connected: this.#mesh?.connectedPeers ?? [],
@@ -18133,7 +18410,8 @@ var Daemon = class {
       role: this.role,
       mode: this.mode,
       invite: this.mode === "direct" && this.role === "host" ? this.#tunnelState : "ready",
-      relay: this.mode === "hosted" ? "Cloudflare TURN when a direct path fails" : "none (direct peer-to-peer only)",
+      relay: this.mode === "hosted" ? this.#mesh?.relayed ? "in use (Cloudflare TURN)" : "available if a direct path fails" : "none (direct peer-to-peer only)",
+      notice: this.#notice,
       access: this.access,
       status: session.status,
       error: session.error,
@@ -18615,7 +18893,54 @@ var folderProperty = {
   }
 };
 function createTools(cliPath2) {
+  let pendingLogin = null;
   return [
+    {
+      name: "live_share_login",
+      description: "Sign in to hosted mode with GitHub. Only needed to HOST in hosted mode (direct mode and guests need no account). Returns a short code and a GitHub URL: tell the user to open the URL, enter the code, and approve; then call live_share_account to confirm.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() {
+        if (pendingLogin && pendingLogin.outcome === null) {
+          return `Sign-in already waiting: open ${pendingLogin.verificationUri} and enter ${pendingLogin.userCode}.`;
+        }
+        const login = await startLogin();
+        const entry = { userCode: login.userCode, verificationUri: login.verificationUri, result: login.done, outcome: null };
+        login.done.then(
+          (name) => {
+            entry.outcome = `Signed in as ${name}.`;
+          },
+          (error) => {
+            entry.outcome = `Sign-in failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        );
+        pendingLogin = entry;
+        return [
+          `Open ${login.verificationUri} and enter the code ${login.userCode} to sign in with GitHub (expires in ${Math.round(login.expiresIn / 60)} minutes).`,
+          "After approving, call live_share_account to confirm the sign-in and see the plan."
+        ].join("\n");
+      }
+    },
+    {
+      name: "live_share_account",
+      description: "The signed-in hosted-mode account: GitHub login, plan tier, its limits (hosted rooms, people per room, session length, monthly relay time), and this month's usage.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() {
+        if (pendingLogin && pendingLogin.outcome === null) {
+          await Promise.race([pendingLogin.result.catch(() => {
+          }), new Promise((resolve4) => setTimeout(resolve4, 2e4))]);
+          if (pendingLogin.outcome === null) {
+            return `Still waiting for approval: open ${pendingLogin.verificationUri} and enter ${pendingLogin.userCode}.`;
+          }
+        }
+        const lead = pendingLogin?.outcome ?? "";
+        try {
+          return [lead, JSON.stringify(await accountSummary(), null, 2)].filter(Boolean).join("\n");
+        } catch (error) {
+          if (error instanceof AccountError) throw new RpcError(error.code, error.message);
+          throw error;
+        }
+      }
+    },
     {
       name: "live_share_start",
       description: 'Share this workspace folder live with other people (Codex Live Share). Returns an invite link and a local editor URL. After calling, open the editor URL in the in-app browser (@Browser) so the user sees the shared editor, and give the user the invite link to send. Default mode "direct" needs no server: signaling runs on this machine through a free Cloudflare quick tunnel and peers connect directly. Use mode "hosted" only if the user asks or direct mode fails (it adds a relay for strict networks).',
@@ -18632,7 +18957,7 @@ function createTools(cliPath2) {
         const existing = findRunEntry(folder);
         const mode = args2["mode"] === "hosted" ? "hosted" : args2["mode"] === "direct" ? "direct" : loadConfig().defaultMode;
         const entry = existing ?? await spawnDaemon(cliPath2, folder, { host: mode });
-        let status = await callDaemon(entry, "status");
+        let status = existing ? await callDaemon(entry, "status") : await awaitOutcome(entry);
         for (let waited = 0; waited < 75e3 && status["invite"] === "opening"; waited += 1e3) {
           await new Promise((resolve4) => setTimeout(resolve4, 1e3));
           status = await callDaemon(entry, "status");
@@ -18668,11 +18993,7 @@ function createTools(cliPath2) {
         }
         if (existing) await callDaemon(existing, "retarget", { signalUrl: invite.signalUrl });
         const entry = existing ?? await spawnDaemon(cliPath2, folder, { join: raw });
-        let status = await callDaemon(entry, "status");
-        for (let waited = 0; waited < 8e3 && ["starting", "connecting"].includes(String(status["status"])); waited += 500) {
-          await new Promise((resolve4) => setTimeout(resolve4, 500));
-          status = await callDaemon(entry, "status");
-        }
+        const status = await awaitOutcome(entry);
         const state = String(status["status"]);
         const lead = state === "waiting" ? `Asked to join room ${code}; waiting for the host to approve.` : state === "connected" ? `Joined room ${code}. Shared files are being copied into ${folder}.` : `Join status: ${state}${status["error"] ? ` (${String(status["error"])})` : ""}.`;
         return [lead, `Editor (open in the in-app browser): ${String(status["uiUrl"])}`, "", JSON.stringify(status, null, 2)].join("\n");
@@ -19074,6 +19395,7 @@ Usage:
   codex-live-share start [FOLDER] [--hosted]   share a folder (direct mode unless --hosted)
   codex-live-share join INVITE [FOLDER]        join into an empty folder (invite link, or a hosted room code)
   codex-live-share admit [NAME] [FOLDER] [--view|--deny]
+  codex-live-share login | logout | account          hosted-mode sign-in (GitHub), plan and usage
   codex-live-share status [FOLDER]
   codex-live-share end [FOLDER]
   codex-live-share mcp                     stdio MCP server (used by the Codex plugin)
@@ -19095,8 +19417,10 @@ async function main() {
     case "start": {
       const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { hosted: { type: "boolean" } } });
       const folder = resolveFolder(positionals[0]);
+      const existing = findRunEntry(folder);
+      if (existing) return printStatus(await callDaemon(existing, "status"));
       const entry = await spawnDaemon(cliPath, folder, { host: values.hosted ? "hosted" : "direct" });
-      return printStatus(await callDaemon(entry, "status"));
+      return printStatus(await awaitOutcome(entry));
     }
     case "join": {
       const invite = parseInvite(rest[0] ?? "", loadConfig().hostedSignalUrl);
@@ -19105,8 +19429,26 @@ async function main() {
       const existing = findRunEntry(folder);
       if (existing) return printStatus(await callDaemon(existing, "retarget", { signalUrl: invite.signalUrl }));
       const entry = await spawnDaemon(cliPath, folder, { join: rest[0] });
-      return printStatus(await callDaemon(entry, "status"));
+      return printStatus(await awaitOutcome(entry));
     }
+    case "login": {
+      const { values } = parseArgs({ args: rest, options: { dev: { type: "string" } } });
+      const signalUrl = loadConfig().hostedSignalUrl;
+      if (values.dev) {
+        console.log(`Signed in as ${await exchange(signalUrl, `dev:${values.dev}`)} (development server).`);
+        return;
+      }
+      const login = await startLogin(signalUrl);
+      console.log(`Open ${login.verificationUri} and enter the code ${login.userCode}`);
+      console.log(`Signed in as ${await login.done}.`);
+      return;
+    }
+    case "logout":
+      await logout();
+      console.log("Signed out of hosted mode.");
+      return;
+    case "account":
+      return printStatus(await accountSummary());
     case "admit": {
       const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { view: { type: "boolean" }, deny: { type: "boolean" } } });
       const access = values.deny ? "deny" : values.view ? "view" : "edit";

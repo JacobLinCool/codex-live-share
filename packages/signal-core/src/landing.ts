@@ -1,3 +1,6 @@
+import { LEGAL_PAGES, legalHref } from './legal';
+import { TIERS, TIER_NAMES } from './tiers';
+
 export const MARKETPLACE_REPO = 'JacobLinCool/codex-live-share';
 export const PLUGIN_SELECTOR = 'live-share@codex-live-share';
 
@@ -5,7 +8,7 @@ export const PLUGIN_SELECTOR = 'live-share@codex-live-share';
  * The page an invite link opens: how to get from a link to a shared folder
  * in Codex. Served by the hosted Worker and by a host daemon in direct mode.
  */
-export function landingPage(code: string | null, origin: string): string {
+export function landingPage(code: string | null, origin: string, legalBase: string | null = null): string {
   const invite = code ? `${origin}/j/${code}` : null;
   const install = `codex plugin marketplace add ${MARKETPLACE_REPO} && codex plugin add ${PLUGIN_SELECTOR}`;
   const say = invite ? `Join live share ${invite}` : 'Start live share';
@@ -36,6 +39,13 @@ export function landingPage(code: string | null, origin: string): string {
   button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; flex: none; }
   button:hover { border-color: var(--accent); }
   .note { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; }
+  td.num, th.num { font-variant-numeric: tabular-nums; }
+  h2 { font-size: 17px; margin: 40px 0 6px; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  footer a { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -60,6 +70,11 @@ export function landingPage(code: string | null, origin: string): string {
       <span class="note">The editor opens in Codex's side browser. Allow the microphone there to add your voice to the transcript.</span>
     </li>
   </ol>
+${code ? '' : pricing()}
+  <footer>${[
+    ...(legalBase === null ? ['<a href="/account">Account</a>'] : []),
+    ...LEGAL_PAGES.map((page) => `<a href="${legalHref(page.slug, legalBase)}">${page.title}</a>`),
+  ].join(' · ')}</footer>
 </main>
 <script>
   for (const button of document.querySelectorAll('[data-copy]')) {
@@ -83,3 +98,22 @@ export const LANDING_HEADERS: Record<string, string> = {
 };
 
 export const STUN_SERVERS = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+
+/** Hosted-mode plans; direct mode is always free and needs no account. */
+function pricing(): string {
+  const label = (name: string) => name[0]!.toUpperCase() + name.slice(1);
+  const hours = (ms: number | null) => (ms === null ? 'Unlimited' : `${ms / 3_600_000} h`);
+  const rows: Array<[string, (tier: (typeof TIERS)[keyof typeof TIERS]) => string]> = [
+    ['Price', (tier) => (tier.priceUsd ? `$${tier.priceUsd} / month` : 'Free')],
+    ['Hosted rooms at once', (tier) => String(tier.rooms)],
+    ['People per room', (tier) => String(tier.people)],
+    ['Session length', (tier) => hours(tier.sessionMs)],
+    ['Relay time per month', (tier) => `${tier.relaySecondsPerMonth / 3_600} h`],
+  ];
+  return `<h2>Hosted mode plans</h2>
+  <p class="note">Direct mode is free and needs no account. Hosted mode adds a relay for networks that block direct connections; only the host signs in (with GitHub).</p>
+  <table>
+    <thead><tr><th></th>${TIER_NAMES.map((name) => `<th class="num">${label(name)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(([title, cell]) => `<tr><td>${title}</td>${TIER_NAMES.map((name) => `<td class="num">${cell(TIERS[name])}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+}

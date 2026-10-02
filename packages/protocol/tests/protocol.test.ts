@@ -6,6 +6,7 @@ import {
   finishPlan,
   normalizeRoomCode,
   normalizeSharedPath,
+  parseSignalClientMessage,
   updatePlanItem,
   validatePlanDraft,
 } from '../src';
@@ -52,5 +53,14 @@ describe('identifiers and paths', () => {
     for (const bad of ['../x', '/etc/passwd', 'a/../../b', 'a//b', 'C:/x', './a', '']) {
       expect(normalizeSharedPath(bad)).toBeNull();
     }
+  });
+});
+
+describe('signal messages', () => {
+  it('accepts bounded relay usage reports only', () => {
+    expect(parseSignalClientMessage({ type: 'usage', relaySeconds: 299.6 })).toEqual({ type: 'usage', relaySeconds: 300 });
+    expect(parseSignalClientMessage({ type: 'usage', relaySeconds: -1 })).toBeNull();
+    expect(parseSignalClientMessage({ type: 'usage', relaySeconds: 1e9 })).toBeNull();
+    expect(parseSignalClientMessage({ type: 'usage' })).toBeNull();
   });
 });

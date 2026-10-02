@@ -1,6 +1,6 @@
 {
   "name": "codex-live-share-monorepo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Live Share for Codex: share a folder over WebRTC with humans, agents, plans, and meeting transcripts.",

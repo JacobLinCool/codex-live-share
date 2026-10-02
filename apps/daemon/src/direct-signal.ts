@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   LANDING_HEADERS,
+  LEGAL_REPO_BASE,
   RoomCore,
   STUN_SERVERS,
   landingPage,
@@ -41,7 +42,7 @@ export class DirectSignal {
         // No TURN in direct mode: nothing of ours sits between the peers.
         response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ ok: true, iceServers: STUN_SERVERS }));
       } else if (url.pathname === `/j/${this.#code}` || url.pathname === `/j/${this.#code}/`) {
-        response.writeHead(200, LANDING_HEADERS).end(landingPage(this.#code, origin));
+        response.writeHead(200, LANDING_HEADERS).end(landingPage(this.#code, origin, LEGAL_REPO_BASE));
       } else {
         response.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
       }

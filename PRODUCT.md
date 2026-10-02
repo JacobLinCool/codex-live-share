@@ -34,6 +34,8 @@ Agents are first-class participants. Before an agent edits, it publishes a short
 - Text files are CRDT-merged character by character; binaries are last-writer-wins; `.git`, `node_modules`, `.env*`, `.gitignore` entries, and TeX build products are never shared.
 - Room membership, plans, transcript, and agent edits are shared state; signaling (the host's own room in direct mode, the Worker in hosted mode) only relays WebRTC negotiation and admissions.
 - Two connection modes: direct (no central server, STUN only, may fail behind strict NAT) and hosted (adds Cloudflare TURN relay). Direct is the default; hosted is the managed-service path.
+- Hosted mode requires the host to sign in with GitHub (device flow); guests never need an account. Plans: Free (1 room, 3 people, 2 h sessions, 10 relay h/month), Plus $5/month (2 rooms, 5 people, 8 h sessions, 50 relay h/month), and Pro $20/month (5 rooms, 8 people, unlimited sessions, 200 relay h/month), enforced server-side, plus per-IP and per-user rate limits. No payment processor yet; an admin sets plans.
+- Legal: Terms of Service, Privacy Policy and Refund Policy in `legal/` (operator Jhen-Ke Lin, Taiwan law), written to keep the operator's obligations minimal: no access to shared content, as-is service, liability capped at three months of fees, no partial refunds.
 - Up to 8 peers per room.
 
 ## Product Principles

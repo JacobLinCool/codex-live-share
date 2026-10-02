@@ -24,6 +24,21 @@ export interface RoomRecord {
   hostPeerId: string;
   createdAt: number;
   ended: boolean;
+  /** Hosted mode: the account whose plan covers this room, and that plan's limits. */
+  owner?: string | null;
+  maxPeople?: number;
+  sessionMs?: number | null;
+}
+
+export type CreateDecision =
+  | { ok: true; owner: string; maxPeople: number; sessionMs: number | null }
+  | { ok: false; code: string; message: string };
+
+/** Hosted mode's rules; direct mode has none (any host may create, up to MAX_PEERS). */
+export interface RoomPolicy {
+  authorizeCreate(request: { authorization: string | null; code: string }): Promise<CreateDecision>;
+  onUsage?(room: RoomRecord, peerId: string, relaySeconds: number): Promise<void>;
+  onEnded?(room: RoomRecord): Promise<void>;
 }
 
 /** What each connection remembers; survives Durable Object hibernation. */
@@ -54,6 +69,7 @@ export interface RoomRuntime {
   storage: RoomStorage;
   /** Every live socket of this room. */
   sockets(): RoomSocket[];
+  policy?: RoomPolicy;
 }
 
 /** Opens the connection being admitted, with its attachment, and returns it. */
@@ -66,6 +82,8 @@ export interface ConnectParams {
   name: string;
   color: string;
   secret: string;
+  /** `Bearer <token>` from the connecting client, if any. */
+  authorization?: string | null;
 }
 
 export type ConnectResult = { ok: true; socket: RoomSocket } | { ok: false; code: string; message: string };
@@ -103,7 +121,16 @@ export class RoomCore {
         return fail('ROOM_EXISTS', 'This room code is taken. Start again to get a new code.');
       }
       if (!room || room.ended) {
-        room = { code, hostPeerId: peerId, createdAt: Date.now(), ended: false };
+        const policy = this.#runtime.policy;
+        const decision = policy ? await policy.authorizeCreate({ authorization: params.authorization ?? null, code }) : null;
+        if (decision && !decision.ok) return fail(decision.code, decision.message);
+        room = {
+          code,
+          hostPeerId: peerId,
+          createdAt: Date.now(),
+          ended: false,
+          ...(decision?.ok ? { owner: decision.owner, maxPeople: decision.maxPeople, sessionMs: decision.sessionMs } : {}),
+        };
         for (const key of Object.keys(members)) delete members[key];
         members[peerId] = { peerId, name, color, isHost: true, access: 'edit', secretHash };
         await storage.put({ room, members });
@@ -173,6 +200,12 @@ export class RoomCore {
     }
     if (!attachment.admitted) return;
 
+    if (message.type === 'usage') {
+      const room = await this.#runtime.storage.get<RoomRecord>('room');
+      if (room && message.relaySeconds > 0) await this.#runtime.policy?.onUsage?.(room, attachment.peerId, message.relaySeconds);
+      return;
+    }
+
     if (message.type === 'signal') {
       const target = this.#socketOf(message.target);
       if (target?.getAttachment()?.admitted) send(target, { type: 'signal', from: attachment.peerId, payload: message.payload });
@@ -186,13 +219,7 @@ export class RoomCore {
       return;
     }
     if (message.type === 'end') {
-      room.ended = true;
-      await storage.put({ room });
-      for (const other of [...this.#runtime.sockets()]) {
-        send(other, { type: 'ended' });
-        other.setAttachment(null);
-        other.close(1000, 'Room ended');
-      }
+      await this.end();
       return;
     }
     const knocking = this.#socketOf(message.peerId);
@@ -209,6 +236,15 @@ export class RoomCore {
       return;
     }
     const members = (await storage.get<Record<string, StoredMember>>('members')) ?? {};
+    const maxPeople = room.maxPeople ?? MAX_PEERS;
+    if (Object.keys(members).length >= maxPeople) {
+      send(socket, {
+        type: 'error',
+        code: 'ROOM_FULL',
+        message: room.owner ? `Your plan allows ${maxPeople} people in a room. Upgrade to add more.` : `A room holds at most ${maxPeople} people.`,
+      });
+      return;
+    }
     const stored: StoredMember = {
       peerId: pending.peerId,
       name: pending.name,
@@ -223,6 +259,27 @@ export class RoomCore {
     const self = toMember(stored);
     send(knocking, { type: 'welcome', self, code: room.code, peers: this.#connectedMembers(members, stored.peerId) });
     this.#broadcast({ type: 'peer-joined', peer: self }, stored.peerId);
+  }
+
+  /** Ends the room for everyone, optionally telling them why first. */
+  async end(reason?: { code: string; message: string }): Promise<void> {
+    const room = await this.#runtime.storage.get<RoomRecord>('room');
+    if (room) {
+      room.ended = true;
+      await this.#runtime.storage.put({ room });
+      await this.#runtime.policy?.onEnded?.(room);
+    }
+    for (const other of [...this.#runtime.sockets()]) {
+      if (reason) send(other, { type: 'notice', ...reason });
+      send(other, { type: 'ended' });
+      other.setAttachment(null);
+      other.close(1000, 'Room ended');
+    }
+  }
+
+  /** Sends a notice to everyone in the room. */
+  notify(code: string, message: string): void {
+    for (const { socket } of this.#admitted()) send(socket, { type: 'notice', code, message });
   }
 
   /** Call when a socket closes or errors. Returns true when the room has no live connection left. */

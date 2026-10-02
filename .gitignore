@@ -143,3 +143,5 @@ wrangler.log
 # The built plugin is committed so the repo works as a Codex plugin marketplace.
 !/plugins/live-share/dist/
 !/plugins/live-share/node_modules/
+
+.dev.vars

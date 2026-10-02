@@ -11,12 +11,14 @@ import {
   type SignalServerMessage,
 } from '@codex-live-share/protocol';
 import { STUN_SERVERS } from '@codex-live-share/signal-core';
-import { isQuickTunnelHost, tunnelAwareLookup } from './resolve';
+import { tunnelAwareLookup } from './resolve';
 
 const FRAGMENT_BYTES = 60 * 1_024;
 const HIGH_WATER_BYTES = 4 * 1_024 * 1_024;
 const RECONNECT_MS = [1_000, 2_000, 5_000, 10_000, 20_000];
 const PING_MS = 25_000;
+const METER_MS = 60_000;
+const REPORT_MS = 5 * 60_000;
 const DISCONNECTED_GRACE_MS = 6_000;
 
 export interface MeshOptions {
@@ -25,6 +27,10 @@ export interface MeshOptions {
   action: 'create' | 'join';
   self: Identity;
   secret: string;
+  /** Hosted mode: ask the service for TURN relay credentials. Direct mode uses STUN only. */
+  hosted: boolean;
+  /** Hosted mode: the host's Live Share token, sent when creating the room. */
+  authToken?: string | null;
   log: (message: string) => void;
 }
 
@@ -35,6 +41,8 @@ export interface MeshEvents {
   open: [peerId: string];
   close: [peerId: string];
   message: [peerId: string, frame: Uint8Array];
+  /** Service notices (plan limits) and in-session refusals. */
+  notice: [code: string, message: string];
 }
 
 interface Link {
@@ -69,6 +77,11 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
   #ping: ReturnType<typeof setInterval> | null = null;
   #reconnect: ReturnType<typeof setTimeout> | null = null;
   #action: 'create' | 'join';
+  #iceRefresh: ReturnType<typeof setTimeout> | null = null;
+  #meter: ReturnType<typeof setInterval> | null = null;
+  #relaySeconds = 0;
+  #relayReportedAt = Date.now();
+  #awaitingMembership = true;
 
   constructor(options: MeshOptions) {
     super();
@@ -97,11 +110,54 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
   }
 
   async start(): Promise<void> {
-    this.#iceServers = await fetchIceServers(this.#options.signalUrl).catch((error: unknown) => {
-      this.#options.log(`ICE configuration unavailable, using public STUN: ${String(error)}`);
-      return ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'];
-    });
+    await this.#refreshIce();
     this.#connect();
+    this.#meter = setInterval(() => this.#meterRelay(), METER_MS);
+  }
+
+  /** Hosted rooms hand out TURN credentials that expire; renew them before they do. */
+  async #refreshIce(): Promise<void> {
+    const { signalUrl, code, self, secret, hosted } = this.#options;
+    const result = await fetchIceServers(hosted ? signalUrl : null, { code, peerId: self.peerId, secret }).catch((error: unknown) => {
+      this.#options.log(`ICE configuration unavailable, using public STUN: ${String(error)}`);
+      return { servers: toNodeIceServers(STUN_SERVERS), expiresIn: null, reason: null };
+    });
+    this.#iceServers = result.servers;
+    if (result.reason) this.#options.log(`No relay: ${result.reason}`);
+    if (this.#iceRefresh) clearTimeout(this.#iceRefresh);
+    if (result.expiresIn && !this.#closed) {
+      this.#iceRefresh = setTimeout(() => void this.#refreshIce(), Math.max(30_000, result.expiresIn * 800));
+    }
+  }
+
+  /** Hosted mode meters TURN use: count time on links whose selected path is a relay, and report it. */
+  #meterRelay(): void {
+    for (const link of this.#links.values()) {
+      if (!link.open) continue;
+      try {
+        const pair = link.pc.getSelectedCandidatePair();
+        if (pair && (pair.local.type === 'relay' || pair.remote.type === 'relay')) this.#relaySeconds += METER_MS / 1_000;
+      } catch {
+        // Closing connection.
+      }
+    }
+    if (this.#relaySeconds > 0 && Date.now() - this.#relayReportedAt >= REPORT_MS && this.#socket?.readyState === WebSocket.OPEN) {
+      this.#signal({ type: 'usage', relaySeconds: this.#relaySeconds });
+      this.#relaySeconds = 0;
+      this.#relayReportedAt = Date.now();
+    }
+  }
+
+  get relayed(): boolean {
+    for (const link of this.#links.values()) {
+      try {
+        const pair = link.open ? link.pc.getSelectedCandidatePair() : null;
+        if (pair && (pair.local.type === 'relay' || pair.remote.type === 'relay')) return true;
+      } catch {
+        // Closing connection.
+      }
+    }
+    return false;
   }
 
   send(peerId: string, frame: Uint8Array): void {
@@ -145,6 +201,9 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
 
   close(): void {
     this.#closed = true;
+    if (this.#relaySeconds > 0) this.#signal({ type: 'usage', relaySeconds: this.#relaySeconds });
+    if (this.#iceRefresh) clearTimeout(this.#iceRefresh);
+    if (this.#meter) clearInterval(this.#meter);
     if (this.#ping) clearInterval(this.#ping);
     if (this.#reconnect) clearTimeout(this.#reconnect);
     this.#socket?.close(1000, 'Daemon stopping');
@@ -158,7 +217,8 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
     url.search = new URLSearchParams({ action: this.#action, peerId: self.peerId, name: self.name, color: self.color, secret }).toString();
     this.emit('status', this.#attempt ? 'reconnecting' : 'connecting', null);
     // A quick-tunnel name is resolved without the OS cache (see resolve.ts).
-    const socket = new WebSocket(url, { lookup: tunnelAwareLookup as never, handshakeTimeout: 15_000 });
+    const headers: Record<string, string> = this.#options.authToken ? { Authorization: `Bearer ${this.#options.authToken}` } : {};
+    const socket = new WebSocket(url, { lookup: tunnelAwareLookup as never, handshakeTimeout: 15_000, headers });
     this.#socket = socket;
     socket.addEventListener('message', (event) => {
       let message: SignalServerMessage;
@@ -200,6 +260,11 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
         for (const peer of message.peers) this.#members.set(peer.peerId, peer);
         this.emit('members', this.members);
         this.emit('status', 'connected', null);
+        // Relay credentials are only issued to members; a guest asked while still knocking.
+        if (this.#options.hosted && this.#awaitingMembership) {
+          this.#awaitingMembership = false;
+          void this.#refreshIce();
+        }
         for (const peer of message.peers) this.#ensureLink(peer.peerId);
         for (const peerId of [...this.#links.keys()]) if (!this.#members.has(peerId)) this.#dropLink(peerId);
         break;
@@ -244,9 +309,18 @@ export class PeerMesh extends EventEmitter<MeshEvents> {
         this.#closed = true;
         this.emit('status', 'ended', 'The host ended the session.');
         break;
+      case 'notice':
+        this.#options.log(`Notice ${message.code}: ${message.message}`);
+        this.emit('notice', message.code, message.message);
+        break;
       case 'error':
+        // After admission, an error is a refused request (e.g. the room is full), not a broken session.
+        if (this.#self && this.#members.has(this.#self.peerId) && message.code === 'ROOM_FULL') {
+          this.emit('notice', message.code, message.message);
+          break;
+        }
         this.emit('status', 'error', message.message);
-        if (['ROOM_NOT_FOUND', 'ROOM_ENDED', 'ROOM_EXISTS', 'ROOM_FULL', 'INVALID_SECRET', 'HOST_OFFLINE'].includes(message.code)) {
+        if (['ROOM_NOT_FOUND', 'ROOM_ENDED', 'ROOM_EXISTS', 'ROOM_FULL', 'INVALID_SECRET', 'HOST_OFFLINE', 'AUTH_REQUIRED', 'ROOM_LIMIT'].includes(message.code)) {
           this.#closed = true;
         }
         break;
@@ -454,19 +528,32 @@ export function newPeerSecret(): string {
   return createSecret();
 }
 
-async function fetchIceServers(signalUrl: string): Promise<Array<string | IceServer>> {
-  // Direct mode (a host's own room, local or through its tunnel) never has TURN.
-  const host = new URL(signalUrl).hostname;
-  if (isQuickTunnelHost(host) || host === '127.0.0.1' || host === 'localhost') return toNodeIceServers(STUN_SERVERS);
-  const response = await fetch(new URL('/api/ice-servers', signalUrl), {
+interface IceResult {
+  servers: Array<string | IceServer>;
+  expiresIn: number | null;
+  reason: string | null;
+}
+
+/** Direct mode (no service URL) never has TURN; hosted members ask the room's service for credentials. */
+async function fetchIceServers(serviceUrl: string | null, member: { code: string; peerId: string; secret: string }): Promise<IceResult> {
+  if (!serviceUrl) return { servers: toNodeIceServers(STUN_SERVERS), expiresIn: null, reason: null };
+  const response = await fetch(new URL('/api/ice-servers', serviceUrl), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(member),
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const payload = (await response.json()) as { iceServers?: Array<{ urls: string | string[]; username?: string; credential?: string }> };
-  return toNodeIceServers(payload.iceServers ?? []);
+  const payload = (await response.json()) as {
+    iceServers?: Array<{ urls: string | string[]; username?: string; credential?: string }>;
+    expiresIn?: number;
+    reason?: string;
+  };
+  return {
+    servers: toNodeIceServers(payload.iceServers ?? STUN_SERVERS),
+    expiresIn: typeof payload.expiresIn === 'number' ? payload.expiresIn : null,
+    reason: payload.reason ?? null,
+  };
 }
 
 /** Browser-style RTCIceServer entries to libdatachannel's format. */

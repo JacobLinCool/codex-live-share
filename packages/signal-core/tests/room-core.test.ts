@@ -126,3 +126,74 @@ describe('RoomCore', () => {
     expect(await core.closed(guest)).toBe(true);
   });
 });
+
+describe('RoomCore with a hosted policy', () => {
+  function policyRoom(decision: import('../src').CreateDecision) {
+    const sockets: FakeSocket[] = [];
+    const usage: Array<[string, number]> = [];
+    const authorizations: Array<string | null> = [];
+    const runtime: RoomRuntime = {
+      storage: new MemoryStorage(),
+      sockets: () => sockets,
+      policy: {
+        authorizeCreate: async ({ authorization }) => {
+          authorizations.push(authorization);
+          return decision;
+        },
+        onUsage: async (_room, peerId, seconds) => {
+          usage.push([peerId, seconds]);
+        },
+      },
+    };
+    const accept: Accept = (attachment) => {
+      const socket = new FakeSocket(attachment, sockets);
+      sockets.push(socket);
+      return socket;
+    };
+    const core = new RoomCore(runtime);
+    return {
+      usage,
+      authorizations,
+      core: {
+        connect: (params: ConnectParams) => core.connect(params, accept),
+        message: core.message.bind(core),
+        closed: core.closed.bind(core),
+        end: core.end.bind(core),
+      },
+    };
+  }
+
+  it('refuses to create a room the policy rejects', async () => {
+    const { core, authorizations } = policyRoom({ ok: false, code: 'AUTH_REQUIRED', message: 'Sign in first.' });
+    const result = await core.connect({ code: 'K7QF2M', action: 'create', ...person('Alice'), authorization: null });
+    expect(result).toMatchObject({ ok: false, code: 'AUTH_REQUIRED' });
+    expect(authorizations).toEqual([null]);
+  });
+
+  it('caps admissions at the plan size and forwards relay usage', async () => {
+    const { core, usage } = policyRoom({ ok: true, owner: 'gh:1', maxPeople: 2, sessionMs: null });
+    const alice = person('Alice');
+    const host = await connect(core, alice, 'create');
+    const bob = person('Bob');
+    const carol = person('Carol');
+    const guest = await connect(core, bob, 'join');
+    await connect(core, carol, 'join');
+    await core.message(host, JSON.stringify({ type: 'admit', peerId: bob.peerId, access: 'edit' }));
+    expect(guest.last('welcome')).toBeTruthy();
+    await core.message(host, JSON.stringify({ type: 'admit', peerId: carol.peerId, access: 'edit' }));
+    expect(host.last('error')).toMatchObject({ code: 'ROOM_FULL' });
+
+    await core.message(guest, JSON.stringify({ type: 'usage', relaySeconds: 300 }));
+    expect(usage).toEqual([[bob.peerId, 300]]);
+  });
+
+  it('ends a room with a reason everyone sees', async () => {
+    const { core } = policyRoom({ ok: true, owner: 'gh:1', maxPeople: 3, sessionMs: 1_000 });
+    const alice = person('Alice');
+    const host = await connect(core, alice, 'create');
+    await core.end({ code: 'SESSION_LIMIT', message: 'Time is up.' });
+    expect(host.last('notice')).toMatchObject({ code: 'SESSION_LIMIT' });
+    expect(host.last('ended')).toBeTruthy();
+    expect(await core.connect({ code: 'K7QF2M', action: 'join', ...person('Bob') })).toMatchObject({ ok: false, code: 'ROOM_ENDED' });
+  });
+});

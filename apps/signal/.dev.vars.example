@@ -1,0 +1,8 @@
+# Copy to .dev.vars for `wrangler dev`. Never deploy DEV_AUTH.
+DEV_AUTH=allow
+ADMIN_TOKEN=dev-admin-token
+# GITHUB_CLIENT_ID=Iv1....        # a GitHub OAuth app with "Enable Device Flow" checked
+# GITHUB_CLIENT_SECRET=...        # for website sign-in (callback URL: <origin>/auth/github/callback)
+# TURN_KEY_ID=...
+# TURN_KEY_SECRET=...
+# DEV_SESSION_MS=15000          # shorten free-tier sessions to test the cutoff

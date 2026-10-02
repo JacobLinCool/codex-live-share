@@ -4,10 +4,11 @@ import { createServer as createNetServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { RpcError, callDaemon, requireDaemon, resolveFolder, spawnDaemon } from './client';
+import { RpcError, awaitOutcome, callDaemon, requireDaemon, resolveFolder, spawnDaemon } from './client';
 import { CONFIG_PATH, folderKey, loadConfig, saveConfig } from './config';
 import { Daemon, DaemonError, parseInvite } from './daemon';
 import { runHook } from './hooks';
+import { accountSummary, exchange, logout, startLogin } from './account';
 import { install } from './install';
 import { findRunEntry } from './registry';
 import { runMcpServer } from './mcp';
@@ -24,6 +25,7 @@ Usage:
   codex-live-share start [FOLDER] [--hosted]   share a folder (direct mode unless --hosted)
   codex-live-share join INVITE [FOLDER]        join into an empty folder (invite link, or a hosted room code)
   codex-live-share admit [NAME] [FOLDER] [--view|--deny]
+  codex-live-share login | logout | account          hosted-mode sign-in (GitHub), plan and usage
   codex-live-share status [FOLDER]
   codex-live-share end [FOLDER]
   codex-live-share mcp                     stdio MCP server (used by the Codex plugin)
@@ -46,8 +48,10 @@ async function main(): Promise<void> {
     case 'start': {
       const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { hosted: { type: 'boolean' } } });
       const folder = resolveFolder(positionals[0]);
+      const existing = findRunEntry(folder);
+      if (existing) return printStatus(await callDaemon(existing, 'status'));
       const entry = await spawnDaemon(cliPath, folder, { host: values.hosted ? 'hosted' : 'direct' });
-      return printStatus(await callDaemon(entry, 'status'));
+      return printStatus(await awaitOutcome(entry));
     }
     case 'join': {
       const invite = parseInvite(rest[0] ?? '', loadConfig().hostedSignalUrl);
@@ -56,8 +60,26 @@ async function main(): Promise<void> {
       const existing = findRunEntry(folder);
       if (existing) return printStatus(await callDaemon(existing, 'retarget', { signalUrl: invite.signalUrl }));
       const entry = await spawnDaemon(cliPath, folder, { join: rest[0]! });
-      return printStatus(await callDaemon(entry, 'status'));
+      return printStatus(await awaitOutcome(entry));
     }
+    case 'login': {
+      const { values } = parseArgs({ args: rest, options: { dev: { type: 'string' } } });
+      const signalUrl = loadConfig().hostedSignalUrl;
+      if (values.dev) {
+        console.log(`Signed in as ${await exchange(signalUrl, `dev:${values.dev}`)} (development server).`);
+        return;
+      }
+      const login = await startLogin(signalUrl);
+      console.log(`Open ${login.verificationUri} and enter the code ${login.userCode}`);
+      console.log(`Signed in as ${await login.done}.`);
+      return;
+    }
+    case 'logout':
+      await logout();
+      console.log('Signed out of hosted mode.');
+      return;
+    case 'account':
+      return printStatus(await accountSummary());
     case 'admit': {
       const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { view: { type: 'boolean' }, deny: { type: 'boolean' } } });
       const access = values.deny ? 'deny' : values.view ? 'view' : 'edit';

@@ -12,7 +12,9 @@ export type SignalClientMessage =
   | { type: 'admit'; peerId: string; access: Access }
   | { type: 'deny'; peerId: string }
   | { type: 'end' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  /** Seconds this peer's links spent on a TURN relay since its last report (hosted mode metering). */
+  | { type: 'usage'; relaySeconds: number };
 
 export interface Knock extends Identity {
   at: number;
@@ -29,6 +31,8 @@ export type SignalServerMessage =
   | { type: 'signal'; from: string; payload: SignalPayload }
   | { type: 'ended' }
   | { type: 'error'; code: string; message: string }
+  /** Non-fatal service notices, e.g. a plan limit was reached. */
+  | { type: 'notice'; code: string; message: string }
   | { type: 'pong' };
 
 export type ConnectAction = 'create' | 'join';
@@ -50,6 +54,12 @@ export function parseSignalClientMessage(value: unknown): SignalClientMessage | 
       return { type: 'end' };
     case 'ping':
       return { type: 'ping' };
+    case 'usage': {
+      const seconds = value['relaySeconds'];
+      return typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 && seconds <= 24 * 3_600
+        ? { type: 'usage', relaySeconds: Math.round(seconds) }
+        : null;
+    }
     default:
       return null;
   }

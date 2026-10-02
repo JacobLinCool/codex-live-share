@@ -1,6 +1,6 @@
 {
   "name": "live-share",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Share this folder live with other people and their Codex agents: shared editing over WebRTC, short public plans before agents edit, and a meeting transcript agents can read.",
   "author": {
     "name": "Jacob Lin",
@@ -44,6 +44,8 @@
     "screenshots": [
       "./assets/screenshot-editor.png",
       "./assets/screenshot-transcript.png"
-    ]
+    ],
+    "privacyPolicyURL": "https://github.com/JacobLinCool/codex-live-share/blob/main/legal/privacy.md",
+    "termsOfServiceURL": "https://github.com/JacobLinCool/codex-live-share/blob/main/legal/terms.md"
   }
 }

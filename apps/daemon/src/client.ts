@@ -75,3 +75,22 @@ export async function spawnDaemon(cliPath: string, folder: string, role: { host:
   }
   throw new RpcError('START_FAILED', `The live share daemon did not start; see ${join(logs, `${key}.log`)}.`);
 }
+
+/**
+ * Waits until a freshly started share has connected, is waiting for the host,
+ * or was refused. A refusal (sign-in missing, plan limit, unknown room) stops
+ * that daemon so the next attempt starts clean, and surfaces the reason.
+ */
+export async function awaitOutcome(entry: RunEntry, timeoutMs = 20_000): Promise<Record<string, unknown>> {
+  let status = await callDaemon<Record<string, unknown>>(entry, 'status');
+  const deadline = Date.now() + timeoutMs;
+  while (['starting', 'connecting', 'reconnecting'].includes(String(status['status'])) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    status = await callDaemon<Record<string, unknown>>(entry, 'status');
+  }
+  if (status['status'] === 'error' || status['status'] === 'denied') {
+    await callDaemon(entry, 'stop').catch(() => {});
+    throw new RpcError('REFUSED', String(status['error'] ?? 'The live share service refused the request.'));
+  }
+  return status;
+}

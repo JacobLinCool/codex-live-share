@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
-import { RpcError, callDaemon, requireDaemon, resolveFolder, spawnDaemon } from './client';
+import { RpcError, awaitOutcome, callDaemon, requireDaemon, resolveFolder, spawnDaemon } from './client';
+import { AccountError, accountSummary, startLogin } from './account';
 import { loadConfig } from './config';
 import { parseInvite } from './daemon';
 import { findRunEntry } from './registry';
@@ -27,7 +28,55 @@ interface Tool {
  * and forwards to its local RPC endpoint.
  */
 export function createTools(cliPath: string): Tool[] {
+  // A sign-in started by live_share_login keeps polling GitHub in this process.
+  let pendingLogin: { userCode: string; verificationUri: string; result: Promise<string>; outcome: string | null } | null = null;
   return [
+    {
+      name: 'live_share_login',
+      description:
+        'Sign in to hosted mode with GitHub. Only needed to HOST in hosted mode (direct mode and guests need no account). Returns a short code and a GitHub URL: tell the user to open the URL, enter the code, and approve; then call live_share_account to confirm.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      async run() {
+        if (pendingLogin && pendingLogin.outcome === null) {
+          return `Sign-in already waiting: open ${pendingLogin.verificationUri} and enter ${pendingLogin.userCode}.`;
+        }
+        const login = await startLogin();
+        const entry = { userCode: login.userCode, verificationUri: login.verificationUri, result: login.done, outcome: null as string | null };
+        login.done.then(
+          (name) => {
+            entry.outcome = `Signed in as ${name}.`;
+          },
+          (error: unknown) => {
+            entry.outcome = `Sign-in failed: ${error instanceof Error ? error.message : String(error)}`;
+          },
+        );
+        pendingLogin = entry;
+        return [
+          `Open ${login.verificationUri} and enter the code ${login.userCode} to sign in with GitHub (expires in ${Math.round(login.expiresIn / 60)} minutes).`,
+          'After approving, call live_share_account to confirm the sign-in and see the plan.',
+        ].join('\n');
+      },
+    },
+    {
+      name: 'live_share_account',
+      description: "The signed-in hosted-mode account: GitHub login, plan tier, its limits (hosted rooms, people per room, session length, monthly relay time), and this month's usage.",
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      async run() {
+        if (pendingLogin && pendingLogin.outcome === null) {
+          await Promise.race([pendingLogin.result.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 20_000))]);
+          if (pendingLogin.outcome === null) {
+            return `Still waiting for approval: open ${pendingLogin.verificationUri} and enter ${pendingLogin.userCode}.`;
+          }
+        }
+        const lead = pendingLogin?.outcome ?? '';
+        try {
+          return [lead, JSON.stringify(await accountSummary(), null, 2)].filter(Boolean).join('\n');
+        } catch (error) {
+          if (error instanceof AccountError) throw new RpcError(error.code, error.message);
+          throw error;
+        }
+      },
+    },
     {
       name: 'live_share_start',
       description:
@@ -45,7 +94,7 @@ export function createTools(cliPath: string): Tool[] {
         const existing = findRunEntry(folder);
         const mode = args['mode'] === 'hosted' ? 'hosted' : args['mode'] === 'direct' ? 'direct' : loadConfig().defaultMode;
         const entry = existing ?? (await spawnDaemon(cliPath, folder, { host: mode }));
-        let status = await callDaemon<Record<string, unknown>>(entry, 'status');
+        let status = existing ? await callDaemon<Record<string, unknown>>(entry, 'status') : await awaitOutcome(entry);
         // Direct mode publishes the invite once its tunnel is up (first run also downloads cloudflared).
         for (let waited = 0; waited < 75_000 && status['invite'] === 'opening'; waited += 1_000) {
           await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -87,11 +136,7 @@ export function createTools(cliPath: string): Tool[] {
         }
         if (existing) await callDaemon(existing, 'retarget', { signalUrl: invite.signalUrl });
         const entry = existing ?? (await spawnDaemon(cliPath, folder, { join: raw }));
-        let status = await callDaemon<Record<string, unknown>>(entry, 'status');
-        for (let waited = 0; waited < 8_000 && ['starting', 'connecting'].includes(String(status['status'])); waited += 500) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          status = await callDaemon<Record<string, unknown>>(entry, 'status');
-        }
+        const status = await awaitOutcome(entry);
         const state = String(status['status']);
         const lead = state === 'waiting'
           ? `Asked to join room ${code}; waiting for the host to approve.`
