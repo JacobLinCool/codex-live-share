@@ -5,5 +5,7 @@ if (Number(process.versions.node.split('.')[0]) < 22) {
   process.exit(1);
 }
 
-process.argv = [process.execPath, '', '--version'];
-await import('../dist/cli.js');
+if (process.argv[2] !== 'hook') {
+  process.argv = [process.execPath, '', '--version'];
+  await import('../dist/cli.js');
+}

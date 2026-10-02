@@ -1,9 +1,9 @@
 import { defineConfig } from 'tsup';
 
-// One self-contained CLI. Only node-datachannel's per-platform native addons
+// Self-contained CLI and lightweight hook bridge. Only node-datachannel's native addons
 // stay outside; the plugin ships them under node_modules/@node-datachannel/*.
 export default defineConfig({
-  entry: { cli: 'src/cli.ts' },
+  entry: { cli: 'src/cli.ts', hook: 'src/hook-cli.ts' },
   format: ['esm'],
   platform: 'node',
   target: 'node22',

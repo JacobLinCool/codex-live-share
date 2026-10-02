@@ -19,6 +19,7 @@ The first use case is co-writing a Markdown or LaTeX paper. Live Share is a Code
 - **Agents as participants.**
   - An agent publishes a 1–5 item plan before it edits, and checks items off as it goes.
   - A Codex `PreToolUse` hook blocks file edits until a plan exists, and a `Stop` hook reminds the agent to close the plan.
+  - Each chat has its own plan. Hooks check shared plans locally, pause a patch once for a new overlapping scope, and deliver agent messages without routine status polling.
   - Text an agent just wrote glows in its owner's color in everyone's editor, then fades.
 - **A transcript agents can read.**
   - Each person transcribes only their own microphone, so every line is attributed to its speaker.
@@ -60,6 +61,7 @@ Restart Codex afterwards.
 - Edit in the side browser. Everyone sees each other's cursors and which file each person has open.
 - Press the microphone to transcribe your voice. The first time, it asks for an OpenAI or Gemini API key.
 - Ask your agent, for example, *"照剛剛討論的改 intro"* or *"apply what we just discussed to the abstract"*. It reads the transcript, posts its plan, edits, and checks items off. Everyone can follow along.
+- Agents can coordinate with `agent_message`, addressed to another agent's plan. Messages are visible to participants and delivered at the recipient's next tool hook or turn boundary; idle agents are not woken. Undelivered messages expire after 15 minutes.
 
 **Finish**
 - Say "End live share", or press the power button in the editor.
@@ -89,7 +91,7 @@ Say "sign in to live share", or call `live_share_login`. Your agent shows a shor
 
 ## Privacy and security
 
-- **Data path.** Files, plans, edits and the transcript travel only between participants, over encrypted WebRTC data channels. Neither the tunnel nor the Worker carries them; TURN relays only ciphertext.
+- **Data path.** Files, plans, agent messages, edits and the transcript travel only between participants, over encrypted WebRTC data channels. Neither the tunnel nor the Worker carries them; TURN relays only ciphertext.
 - **Admission.** Joining needs the invite link and the host's approval. Each peer proves its identity on reconnect with a per-share secret.
 - **Local access.** The editor and the agent tools talk to a service bound to `127.0.0.1` and protected by a per-share token. Only the signaling endpoint is exposed through the tunnel.
 - **Hosted-mode tokens.** The service stores only hashes of hosted-mode tokens. The GitHub token used to sign in is exchanged once, then discarded.
@@ -179,6 +181,7 @@ Secrets set with `wrangler secret put` are kept across deploys.
 - **Direct mode behind strict NAT.** Peers behind symmetric NAT cannot connect in direct mode; use hosted mode.
 - **Ignore rules.** Only the top-level `.gitignore` is honored.
 - **Edit enforcement.** The plan-before-edit hook covers Codex's `apply_patch` edits, not files changed through shell commands.
+- **Concurrent edits.** Overlap checks use declared file paths and locally received plans, not distributed locks. A new overlap pauses a patch once for review; a retry proceeds. Simultaneous offline edits and semantic conflicts still require coordination. Shell hooks deliver messages but do not infer which files an arbitrary command will modify.
 - **Microphone in Codex's side browser.** If the side browser blocks the microphone, open the editor URL in a regular browser to transcribe.
 
 ## License

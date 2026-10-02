@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm --filter @codex-live-share/transcribe build && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
@@ -33,6 +34,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.1.1",
     "typescript": "7.0.2",
     "vite": "8.3.2"
   }

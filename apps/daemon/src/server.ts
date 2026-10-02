@@ -118,16 +118,19 @@ export function createDaemonServer(daemon: Daemon, webRoot: string): Server {
 export async function rpc(daemon: Daemon, method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
     case 'status':
-      return daemon.status();
+      return {
+        ...daemon.status(),
+        ...(typeof params['session'] === 'string' ? { coordination: daemon.coordination.context(params['session']) } : {}),
+      };
     case 'plan_publish': {
       const items = Array.isArray(params['items']) ? params['items'] : [];
       const plan = daemon.publishPlan(
         items.map((item) => (typeof item === 'string'
           ? { text: item }
           : { text: String((item as Record<string, unknown>)['text'] ?? ''), files: toStrings((item as Record<string, unknown>)['files']) })),
-        typeof params['session'] === 'string' ? params['session'] : null,
+        requireAgentSession(params),
       );
-      return describePlan(plan);
+      return { ...describePlan(plan), coordination: daemon.coordination.context(plan.agentSession, plan.items.flatMap((item) => item.files)) };
     }
     case 'plan_update': {
       const n = Number(params['item']);
@@ -136,10 +139,12 @@ export async function rpc(daemon: Daemon, method: string, params: Record<string,
       if (!['pending', 'in_progress', 'done', 'dropped'].includes(status)) {
         throw new DaemonError('INVALID_STATUS', 'status must be pending, in_progress, done, or dropped.');
       }
-      return describePlan(daemon.updatePlan(String(params['planId']), n - 1, status as 'pending' | 'in_progress' | 'done' | 'dropped'));
+      return describePlan(daemon.updatePlan(String(params['planId']), n - 1, status as 'pending' | 'in_progress' | 'done' | 'dropped', requireAgentSession(params)));
     }
     case 'plan_finish':
-      return describePlan(daemon.finishPlan(String(params['planId']), params['status'] === 'abandoned' ? 'abandoned' : 'done'));
+      return describePlan(daemon.finishPlan(String(params['planId']), params['status'] === 'abandoned' ? 'abandoned' : 'done', requireAgentSession(params)));
+    case 'agent_message':
+      return daemon.sendAgentMessage(requireAgentSession(params), String(params['toPlan'] ?? ''), String(params['text'] ?? ''));
     case 'read_transcript': {
       const after = typeof params['after'] === 'number' ? params['after'] : undefined;
       const limit = typeof params['limit'] === 'number' ? params['limit'] : undefined;
@@ -170,6 +175,12 @@ export async function rpc(daemon: Daemon, method: string, params: Record<string,
     default:
       throw new DaemonError('UNKNOWN_METHOD', `Unknown method ${method}`);
   }
+}
+
+function requireAgentSession(params: Record<string, unknown>): string {
+  const session = params['session'];
+  if (typeof session !== 'string' || !session || session.length > 500) throw new DaemonError('SESSION_REQUIRED', 'Live Share hook identity is missing. Enable the plugin hooks and restart Codex.');
+  return session;
 }
 
 function serveStatic(pathname: string, response: ServerResponse, webRoot: string): void {

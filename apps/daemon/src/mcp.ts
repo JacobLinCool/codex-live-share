@@ -15,6 +15,17 @@ const folderProperty = {
   },
 };
 
+const agentProperties = {
+  ...folderProperty,
+  _agent_session: { type: 'string', description: 'Filled automatically by the Live Share hook. Omit this field.' },
+};
+
+function agentSession(args: Record<string, unknown>): string {
+  const session = args['_agent_session'];
+  if (typeof session !== 'string' || !session || session.length > 500) throw new RpcError('SESSION_REQUIRED', 'Live Share hook identity is missing. Enable the plugin hooks and restart Codex.');
+  return session;
+}
+
 interface Tool {
   name: string;
   description: string;
@@ -149,11 +160,11 @@ export function createTools(cliPath: string): Tool[] {
     {
       name: 'live_share_status',
       description:
-        'Who is in the live share, which files each person has open, every agent\'s active plan, and recent agent edits. Check this before editing to avoid parts other agents are working on.',
-      inputSchema: { type: 'object', properties: { ...folderProperty }, additionalProperties: false },
+        'Inspect people, open files, active agent plans, recent edits, and queued messages on demand. Hooks already surface relevant overlaps and messages, so routine polling is unnecessary.',
+      inputSchema: { type: 'object', properties: agentProperties, additionalProperties: false },
       async run(args) {
         const entry = requireDaemon(resolveFolder(args['folder']));
-        return JSON.stringify(await callDaemon(entry, 'status'), null, 2);
+        return JSON.stringify(await callDaemon(entry, 'status', typeof args['_agent_session'] === 'string' ? { session: args['_agent_session'] } : {}), null, 2);
       },
     },
     {
@@ -215,14 +226,14 @@ export function createTools(cliPath: string): Tool[] {
               additionalProperties: false,
             },
           },
-          ...folderProperty,
+          ...agentProperties,
         },
         required: ['items'],
         additionalProperties: false,
       },
       async run(args) {
         const entry = requireDaemon(resolveFolder(args['folder']));
-        const plan = await callDaemon<Record<string, unknown>>(entry, 'plan_publish', { items: args['items'] });
+        const plan = await callDaemon<Record<string, unknown>>(entry, 'plan_publish', { items: args['items'], session: agentSession(args) });
         return `Plan ${String(plan['planId'])} published. Mark each item with plan_update as you go.\n${JSON.stringify(plan, null, 2)}`;
       },
     },
@@ -235,14 +246,14 @@ export function createTools(cliPath: string): Tool[] {
           plan_id: { type: 'string' },
           item: { type: 'number', description: '1-based item number.' },
           status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'dropped'] },
-          ...folderProperty,
+          ...agentProperties,
         },
         required: ['plan_id', 'item', 'status'],
         additionalProperties: false,
       },
       async run(args) {
         const entry = requireDaemon(resolveFolder(args['folder']));
-        const plan = await callDaemon(entry, 'plan_update', { planId: args['plan_id'], item: args['item'], status: args['status'] });
+        const plan = await callDaemon(entry, 'plan_update', { planId: args['plan_id'], item: args['item'], status: args['status'], session: agentSession(args) });
         return JSON.stringify(plan, null, 2);
       },
     },
@@ -251,13 +262,30 @@ export function createTools(cliPath: string): Tool[] {
       description: 'Close your plan: done marks open items done; abandoned drops them (e.g. the user changed direction).',
       inputSchema: {
         type: 'object',
-        properties: { plan_id: { type: 'string' }, status: { type: 'string', enum: ['done', 'abandoned'] }, ...folderProperty },
+        properties: { plan_id: { type: 'string' }, status: { type: 'string', enum: ['done', 'abandoned'] }, ...agentProperties },
         required: ['plan_id'],
         additionalProperties: false,
       },
       async run(args) {
         const entry = requireDaemon(resolveFolder(args['folder']));
-        return JSON.stringify(await callDaemon(entry, 'plan_finish', { planId: args['plan_id'], status: args['status'] ?? 'done' }), null, 2);
+        return JSON.stringify(await callDaemon(entry, 'plan_finish', { planId: args['plan_id'], status: args['status'] ?? 'done', session: agentSession(args) }), null, 2);
+      },
+    },
+    {
+      name: 'agent_message',
+      description: 'Send a short coordination message to the agent owning a plan (use its planId from an overlap notice or live_share_status). Messages are shared with session participants and delivered at the recipient’s next hook, not an immediate wake-up. Use only when a discussion or handoff is needed; do not poll or send routine status updates.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          to_plan: { type: 'string', description: 'Recipient planId.' },
+          text: { type: 'string', minLength: 1, maxLength: 1_000 },
+          ...agentProperties,
+        },
+        required: ['to_plan', 'text'], additionalProperties: false,
+      },
+      async run(args) {
+        const entry = requireDaemon(resolveFolder(args['folder']));
+        return JSON.stringify(await callDaemon(entry, 'agent_message', { session: agentSession(args), toPlan: args['to_plan'], text: args['text'] }), null, 2);
       },
     },
     {

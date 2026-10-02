@@ -41,6 +41,8 @@ import { QuickTunnel, resolveCloudflared } from './tunnel';
 import { hostedToken } from './account';
 import { removeRunEntry, writeRunEntry } from './registry';
 import { ShareStore, type ShareRecord } from './share-store';
+import { hookAgentSession } from './agent-context';
+import { Coordination } from './coordination';
 
 const SAVE_DEBOUNCE_MS = 1_000;
 const AGENT_EDIT_WINDOW_MS = 120_000;
@@ -80,6 +82,7 @@ export class Daemon {
   readonly hub = new DocHub(this.doc);
   readonly store: ShareStore;
   readonly identity: Identity;
+  readonly coordination: Coordination;
   port = 0;
 
   #directSignal: DirectSignal | null = null;
@@ -151,6 +154,7 @@ export class Daemon {
     this.#record.localToken ??= randomBytes(24).toString('hex');
     this.token = this.#record.localToken;
     this.identity = { peerId: this.#record.peerId, name: this.#config.name, color: this.#config.color };
+    this.coordination = new Coordination(this.doc, this.identity);
   }
 
   get code(): string {
@@ -388,25 +392,25 @@ export class Daemon {
     };
   }
 
-  publishPlan(items: PlanDraftItem[], agentSession: string | null): Plan {
+  publishPlan(items: PlanDraftItem[], agentSession: string): Plan {
     this.#assertWritable();
     const reason = validatePlanDraft(items);
     if (reason) throw new DaemonError('INVALID_PLAN', reason);
     const plans = plansOf(this.doc);
     const plan = createPlan(this.identity, items, agentSession);
     this.doc.transact(() => {
-      for (const existing of this.#ownActivePlans()) plans.set(existing.id, finishPlan(existing, 'abandoned'));
+      for (const existing of this.#ownActivePlans(agentSession)) plans.set(existing.id, finishPlan(existing, 'abandoned'));
       plans.set(plan.id, plan);
     });
     this.#setActivity('planning', plan.items[0]?.files[0] ?? null);
     return plan;
   }
 
-  updatePlan(planId: string, index: number, status: PlanItemStatus): Plan {
+  updatePlan(planId: string, index: number, status: PlanItemStatus, agentSession: string): Plan {
     this.#assertWritable();
     const plans = plansOf(this.doc);
     const plan = plans.get(planId);
-    if (!plan || plan.owner.peerId !== this.identity.peerId) throw new DaemonError('PLAN_NOT_FOUND', `You have no plan ${planId}.`);
+    if (!plan || plan.owner.peerId !== this.identity.peerId || plan.agentSession !== agentSession) throw new DaemonError('PLAN_NOT_FOUND', `This chat has no plan ${planId}.`);
     let next: Plan;
     try {
       next = updatePlanItem(plan, index, status);
@@ -414,19 +418,24 @@ export class Daemon {
       throw new DaemonError('INVALID_ITEM', error instanceof Error ? error.message : String(error));
     }
     plans.set(planId, next);
-    if (next.status !== 'active') this.#setActivity('idle', null);
+    if (next.status !== 'active' && this.#ownActivePlans().length === 0) this.#setActivity('idle', null);
     return next;
   }
 
-  finishPlan(planId: string, status: 'done' | 'abandoned'): Plan {
+  finishPlan(planId: string, status: 'done' | 'abandoned', agentSession: string): Plan {
     this.#assertWritable();
     const plans = plansOf(this.doc);
     const plan = plans.get(planId);
-    if (!plan || plan.owner.peerId !== this.identity.peerId) throw new DaemonError('PLAN_NOT_FOUND', `You have no plan ${planId}.`);
+    if (!plan || plan.owner.peerId !== this.identity.peerId || plan.agentSession !== agentSession) throw new DaemonError('PLAN_NOT_FOUND', `This chat has no plan ${planId}.`);
     const next = finishPlan(plan, status);
     plans.set(planId, next);
-    this.#setActivity('idle', null);
+    if (this.#ownActivePlans().length === 0) this.#setActivity('idle', null);
     return next;
+  }
+
+  sendAgentMessage(session: string, toPlan: string, text: string): { id: string; status: 'queued' } {
+    this.#assertWritable();
+    return this.coordination.send(session, toPlan, text);
   }
 
   readTranscript(query: { after?: number; limit?: number; sinceMinutes?: number }): {
@@ -456,25 +465,42 @@ export class Daemon {
 
   /** Codex hook bridge; returns a denial reason or null to allow. */
   hook(event: string, payload: Record<string, unknown>): { deny?: string; context?: string; continueWith?: string } {
+    const session = hookAgentSession(payload);
     if (event === 'session-start') {
       return { context: sessionContext(this) };
     }
+    // Never associate a hook with some other chat's plan when identity is absent.
+    if (!session) return event === 'pre-tool-use' && editedPaths(payload, this.folder).length
+      ? { deny: 'Live Share could not identify this chat. Restart Codex with the plugin hooks enabled.' } : {};
+    if (event === 'session-end') {
+      this.doc.transact(() => {
+        for (const plan of this.#ownActivePlans(session)) plansOf(this.doc).set(plan.id, finishPlan(plan, 'abandoned'));
+      });
+      if (this.#ownActivePlans().length === 0) this.#setActivity('idle', null);
+      return {};
+    }
+    if (event === 'user-prompt-submit') {
+      const context = this.coordination.context(session);
+      return context ? { context } : {};
+    }
     if (event === 'stop') {
-      const open = this.#ownActivePlans();
-      if (!open.length || payload['stop_hook_active'] === true) return {};
-      const plan = open[0]!;
-      const pending = plan.items.flatMap((item, index) => (item.status === 'pending' || item.status === 'in_progress' ? [`${index + 1}. ${item.text}`] : []));
-      return {
-        continueWith: `Your live share plan ${plan.id} still shows open items that others are watching: ${pending.join('; ')}. Mark finished items done with plan_update, or close the plan with plan_finish (status "abandoned" if you stopped early), then end your turn.`,
-      };
+      if (payload['stop_hook_active'] === true) return {};
+      const context = this.coordination.context(session);
+      const plan = this.#ownActivePlans(session)[0];
+      const reminder = plan ? `Your live share plan ${plan.id} has open items. Mark finished items done with plan_update, or close it with plan_finish (abandoned if stopped early).` : null;
+      const continueWith = [context, reminder].filter(Boolean).join('\n');
+      return continueWith ? { continueWith } : {};
     }
     const paths = editedPaths(payload, this.folder);
     if (event === 'pre-tool-use') {
-      if (paths.length === 0) return {};
+      if (paths.length === 0) {
+        const context = this.coordination.context(session);
+        return context ? { context } : {};
+      }
       if (this.access !== 'edit') {
         return { deny: `This live share session is view-only for you; ${this.code}'s host has not granted edit access, so files here cannot be changed.` };
       }
-      if (this.#ownActivePlans().length === 0) {
+      if (this.#ownActivePlans(session).length === 0) {
         return {
           deny: [
             `This folder is in a Codex Live Share session (room ${this.code}) and other people can see your work.`,
@@ -483,13 +509,19 @@ export class Daemon {
           ].join(' '),
         };
       }
+      const notice = this.coordination.notice(session, paths);
+      // Context alone would still execute the pending patch. Pause only for a
+      // new overlap so the model can reconsider before the edit runs.
+      if (notice.overlap && notice.context) return { deny: notice.context };
       const now = Date.now();
       for (const path of paths) this.#agentTouched.set(path, now);
       this.#setActivity('editing', paths[0] ?? null);
-      return {};
+      return notice.context ? { context: notice.context } : {};
     }
     if (event === 'post-tool-use') {
       for (const path of paths) this.#sync?.touch(path);
+      const context = this.coordination.context(session);
+      return context ? { context } : {};
     }
     return {};
   }
@@ -542,6 +574,7 @@ export class Daemon {
       this.#mesh?.close();
       this.#tunnel?.stop();
       this.#directSignal?.close();
+      if (this.#idleTimer) clearTimeout(this.#idleTimer);
       this.hub.destroy();
       removeRunEntry(this.folder);
       this.onStop?.();
@@ -681,8 +714,8 @@ export class Daemon {
     if (byAgent) this.#setActivity('editing', edit.path);
   }
 
-  #ownActivePlans(): Plan[] {
-    return [...plansOf(this.doc).values()].filter((plan) => plan.owner.peerId === this.identity.peerId && plan.status === 'active');
+  #ownActivePlans(session?: string): Plan[] {
+    return [...plansOf(this.doc).values()].filter((plan) => plan.owner.peerId === this.identity.peerId && plan.status === 'active' && (session === undefined || plan.agentSession === session));
   }
 
   #setActivity(state: AgentActivity['state'], file: string | null): void {
@@ -742,6 +775,7 @@ export function describePlan(plan: Plan): Record<string, unknown> {
   return {
     planId: plan.id,
     by: agentLabel(plan.owner.name),
+    agentSession: plan.agentSession,
     status: plan.status,
     items: plan.items.map((item, index) => ({ n: index + 1, text: item.text, files: item.files, status: item.status })),
     updatedAt: plan.updatedAt,
@@ -751,8 +785,7 @@ export function describePlan(plan: Plan): Record<string, unknown> {
 function sessionContext(daemon: Daemon): string {
   return [
     `This folder is shared live with other people (Codex Live Share room ${daemon.code}); edits sync to them immediately.`,
-    'Use the live_share tools: read_transcript for what was said in the meeting, live_share_status for who is editing what,',
-    'and plan_publish before editing (1-5 short items), then plan_update as each item is done.',
+    'Publish a plan before editing and update its items as you finish. Hooks supply relevant overlaps and agent messages automatically; no routine status polling is needed.',
   ].join(' ');
 }
 

@@ -1,26 +1,78 @@
 {
-  "description": "Live Share: plan before editing a shared folder, attribute agent edits, keep plans honest, and remind new sessions that the folder is shared.",
+  "description": "Live Share: automatic chat identity, relevant overlap notices and agent messages, and public progress.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "apply_patch",
-        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook pre-tool-use", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook pre-tool-use", "timeout": 10 }]
+        "matcher": "apply_patch|Bash|mcp__live_share__(plan_publish|plan_update|plan_finish|agent_message|live_share_status)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook pre-tool-use",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook pre-tool-use",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "apply_patch",
-        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook post-tool-use", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook post-tool-use", "timeout": 10, "async": true }]
+        "matcher": "apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook post-tool-use",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook post-tool-use",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook session-start", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook session-start", "timeout": 10 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook session-start",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook session-start",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "\"$PLUGIN_ROOT/bin/run\" hook stop", "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook stop", "timeout": 10 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook stop",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook user-prompt-submit",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook user-prompt-submit",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/bin/run\" hook session-end",
+            "commandWindows": "\"%PLUGIN_ROOT%\\bin\\run.cmd\" hook session-end",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

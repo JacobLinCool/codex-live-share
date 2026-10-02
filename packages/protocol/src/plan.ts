@@ -1,4 +1,5 @@
 import type { Identity } from './identity';
+import { normalizeSharedPath } from './doc';
 
 export const MAX_PLAN_ITEMS = 5;
 /** A CJK character or a Latin word each counts as one unit. */
@@ -17,8 +18,8 @@ export interface PlanItem {
 export interface Plan {
   id: string;
   owner: Identity;
-  /** Codex session that published it, when the hook layer could tell. */
-  agentSession: string | null;
+  /** Session/subagent identity supplied by the hook, not by the model. */
+  agentSession: string;
   items: PlanItem[];
   status: PlanStatus;
   createdAt: string;
@@ -54,6 +55,8 @@ export function validatePlanDraft(items: readonly PlanDraftItem[]): string | nul
   if (items.length === 0) return 'A plan needs at least one item.';
   if (items.length > MAX_PLAN_ITEMS) return `A plan has at most ${MAX_PLAN_ITEMS} items; merge related steps.`;
   for (const [index, item] of items.entries()) {
+    if ((item.files?.length ?? 0) > 8) return `Item ${index + 1} has more than 8 file paths; split its scope.`;
+    if (item.files?.some((path) => !normalizeSharedPath(path))) return `Item ${index + 1} needs relative file paths inside the shared folder.`;
     const text = item.text.trim();
     if (!text) return `Item ${index + 1} is empty.`;
     if (text.includes('\n')) return `Item ${index + 1} must be a single line.`;
@@ -64,15 +67,15 @@ export function validatePlanDraft(items: readonly PlanDraftItem[]): string | nul
   return null;
 }
 
-export function createPlan(owner: Identity, items: readonly PlanDraftItem[], agentSession: string | null, now = new Date()): Plan {
+export function createPlan(owner: Identity, items: readonly PlanDraftItem[], agentSession: string, now = new Date()): Plan {
   const at = now.toISOString();
   return {
-    id: crypto.randomUUID().slice(0, 8),
+    id: crypto.randomUUID(),
     owner,
     agentSession,
     items: items.map((item, index) => ({
       text: item.text.trim(),
-      files: [...new Set(item.files ?? [])].slice(0, 8),
+      files: [...new Set((item.files ?? []).map((path) => normalizeSharedPath(path)!))],
       status: index === 0 ? 'in_progress' : 'pending',
     })),
     status: 'active',

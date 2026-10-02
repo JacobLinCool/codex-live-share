@@ -1,13 +1,16 @@
 import { realpathSync } from 'node:fs';
 import { callDaemon } from './client';
 import { findRunEntry } from './registry';
+import { agentToolInput } from './agent-context';
 
-type HookEvent = 'pre-tool-use' | 'post-tool-use' | 'session-start' | 'stop';
+type HookEvent = 'pre-tool-use' | 'post-tool-use' | 'session-start' | 'session-end' | 'user-prompt-submit' | 'stop';
 
 const EVENT_NAMES: Record<HookEvent, string> = {
   'pre-tool-use': 'PreToolUse',
   'post-tool-use': 'PostToolUse',
   'session-start': 'SessionStart',
+  'session-end': 'SessionEnd',
+  'user-prompt-submit': 'UserPromptSubmit',
   stop: 'Stop',
 };
 
@@ -24,6 +27,14 @@ export async function runHook(event: string): Promise<void> {
     payload = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     return;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  if (event === 'pre-tool-use') {
+    const updatedInput = agentToolInput(payload);
+    if (updatedInput) {
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput } }));
+      return;
+    }
   }
   const cwd = typeof payload['cwd'] === 'string' ? payload['cwd'] : process.cwd();
   let folder: string;

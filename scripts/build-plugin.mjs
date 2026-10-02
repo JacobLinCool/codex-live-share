@@ -16,7 +16,7 @@ const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).ver
 /** macOS Intel is intentionally unsupported. */
 const NATIVE = Object.entries(daemon.optionalDependencies);
 
-for (const required of ['apps/daemon/dist/cli.js', 'apps/web/dist/index.html']) {
+for (const required of ['apps/daemon/dist/cli.js', 'apps/daemon/dist/hook.js', 'apps/web/dist/index.html']) {
   if (!existsSync(join(root, required))) {
     console.error(`Missing ${required}; run \`pnpm build\` first.`);
     process.exit(1);
@@ -27,6 +27,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 cpSync(join(root, 'plugin-src'), out, { recursive: true });
 cpSync(join(root, 'apps/daemon/dist/cli.js'), join(out, 'dist/cli.js'));
+cpSync(join(root, 'apps/daemon/dist/hook.js'), join(out, 'dist/hook.js'));
 cpSync(join(root, 'apps/web/dist'), join(out, 'dist/web'), { recursive: true, filter: (path) => !path.endsWith('.map') });
 writeFileSync(join(out, 'package.json'), `${JSON.stringify({ name: 'codex-live-share-plugin', version, private: true, type: 'module' }, null, 2)}\n`);
 

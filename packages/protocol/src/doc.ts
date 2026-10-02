@@ -7,6 +7,7 @@ import type { Plan } from './plan';
  * - files: relative POSIX path -> Y.Text (text files) or BlobRef (binary files)
  * - blobs: sha256 -> bytes, kept only while some path references the hash
  * - plans: plan id -> Plan, written only by the owning peer
+ * - agentMessages: bounded, expiring coordination messages addressed to a chat
  * - transcript: finalized lines, each appended by the speaker's own peer
  * - edits: recent agent edits with relative ranges, so every UI can highlight them
  */

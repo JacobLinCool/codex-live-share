@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,4 +65,25 @@ test('an explicit compatible runtime runs the requested command only once on std
   const result = spawnSync(launcher, ['--version'], options);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^\d+\.\d+\.\d+\n$/);
+});
+
+test('hooks inject chat identity without the CLI bundle or any native addon', posix, (t) => {
+  const options = fixture(t);
+  const root = join(options.cwd, 'plugin');
+  mkdirSync(join(root, 'bin'), { recursive: true });
+  mkdirSync(join(root, 'dist'));
+  writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+  for (const path of ['bin/run', 'bin/check-runtime.mjs', 'dist/hook.js']) {
+    cpSync(fileURLToPath(new URL(`../plugins/live-share/${path}`, import.meta.url)), join(root, path));
+  }
+  options.env.CODEX_LIVE_SHARE_NODE = process.execPath;
+  const result = spawnSync(join(root, 'bin/run'), ['hook', 'pre-tool-use'], {
+    ...options,
+    input: JSON.stringify({ session_id: 'chat-a', agent_id: 'child', tool_name: 'mcp__live_share__plan_publish', tool_input: { items: [], _agent_session: 'wrong-chat' } }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout).hookSpecificOutput;
+  assert.equal(output.permissionDecision, 'allow');
+  assert.deepEqual(output.updatedInput, { items: [], _agent_session: '["chat-a","child"]' });
+  assert.equal(output.additionalContext, undefined, 'identity injection costs no model context');
 });

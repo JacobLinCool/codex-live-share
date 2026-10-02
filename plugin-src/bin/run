@@ -6,11 +6,19 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export PATH
 
+entry="$root/dist/cli.js"
+probe_mode=cli
+if [ "${1:-}" = hook ]; then
+  entry="$root/dist/hook.js"
+  probe_mode=hook
+  shift
+fi
+
 # A signed macOS runtime can execute JavaScript but reject third-party native
-# addons. Probe the real CLI before selecting it, including for MCP and hooks.
+# addons. MCP needs the addon; the lightweight hook bridge does not.
 if [ -n "${CODEX_LIVE_SHARE_NODE:-}" ]; then
-  "$CODEX_LIVE_SHARE_NODE" "$root/bin/check-runtime.mjs" >/dev/null
-  exec "$CODEX_LIVE_SHARE_NODE" "$root/dist/cli.js" "$@"
+  "$CODEX_LIVE_SHARE_NODE" "$root/bin/check-runtime.mjs" "$probe_mode" >/dev/null
+  exec "$CODEX_LIVE_SHARE_NODE" "$entry" "$@"
 fi
 
 cache_root=${XDG_CACHE_HOME:-${HOME:-}/.cache}
@@ -28,8 +36,8 @@ for candidate in \
   "$(command -v node 2>/dev/null || true)"
 do
   if [ -n "$candidate" ] && [ -x "$candidate" ] && \
-    "$candidate" "$root/bin/check-runtime.mjs" >/dev/null 2>&1; then
-    exec "$candidate" "$root/dist/cli.js" "$@"
+    "$candidate" "$root/bin/check-runtime.mjs" "$probe_mode" >/dev/null 2>&1; then
+    exec "$candidate" "$entry" "$@"
   fi
 done
 

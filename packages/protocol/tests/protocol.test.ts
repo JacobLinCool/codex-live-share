@@ -28,14 +28,14 @@ describe('plan drafts', () => {
   });
 
   it('advances items and finishes when nothing is open', () => {
-    let plan = createPlan(owner, [{ text: 'a' }, { text: 'b' }], null);
+    let plan = createPlan(owner, [{ text: 'a' }, { text: 'b' }], 'session-a');
     expect(plan.items.map((item) => item.status)).toEqual(['in_progress', 'pending']);
     plan = updatePlanItem(plan, 0, 'done');
     expect(plan.items.map((item) => item.status)).toEqual(['done', 'in_progress']);
     expect(plan.status).toBe('active');
     plan = updatePlanItem(plan, 1, 'done');
     expect(plan.status).toBe('done');
-    expect(finishPlan(createPlan(owner, [{ text: 'a' }], null), 'abandoned').items[0]?.status).toBe('dropped');
+    expect(finishPlan(createPlan(owner, [{ text: 'a' }], 'session-a'), 'abandoned').items[0]?.status).toBe('dropped');
   });
 });
 

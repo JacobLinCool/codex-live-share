@@ -1,12 +1,11 @@
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { blobsOf, filesOf, isBlobRef } from '@codex-live-share/protocol';
 import { useYType } from '../lib/hooks';
 import { formatSize, t } from '../lib/i18n';
 import type { LiveSession } from '../lib/session';
 import { Editor } from './Editor';
+import { mountMarkdownPreview } from '../lib/markdown-preview';
 
 interface FileViewProps {
   live: LiveSession;
@@ -39,7 +38,7 @@ export function FileView({ live, path, readOnly, selfPeerId }: FileViewProps) {
         ) : null}
       </div>
       {value instanceof Y.Text ? (
-        mode === 'preview' ? <MarkdownPreview text={value} /> : <Editor live={live} path={path} text={value} readOnly={readOnly} selfPeerId={selfPeerId} />
+        mode === 'preview' ? <MarkdownPreview text={value} path={path} doc={live.doc} /> : <Editor live={live} path={path} text={value} readOnly={readOnly} selfPeerId={selfPeerId} />
       ) : isBlobRef(value) ? (
         <BlobView live={live} path={path} hash={value.hash} size={value.size} />
       ) : null}
@@ -47,12 +46,12 @@ export function FileView({ live, path, readOnly, selfPeerId }: FileViewProps) {
   );
 }
 
-function MarkdownPreview({ text }: { text: Y.Text }) {
-  useYType(text);
-  const source = text.toString();
-  // Collaborators' content is untrusted: sanitize before it reaches the DOM.
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(source, { async: false })), [source]);
-  return <article className="preview" dangerouslySetInnerHTML={{ __html: html }} />;
+function MarkdownPreview({ text, path, doc }: { text: Y.Text; path: string; doc: Y.Doc }) {
+  const element = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (element.current) return mountMarkdownPreview(element.current, text, path, doc);
+  }, [text, path, doc]);
+  return <article className="preview" ref={element} />;
 }
 
 function BlobView({ live, path, hash, size }: { live: LiveSession; path: string; hash: string; size: number }) {
